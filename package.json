@@ -1,0 +1,14 @@
+{
+  "name": "game-creator-chatbot",
+  "version": "1.0.0",
+  "description": "A chatbot backed by cooperating agents that designs and builds complete web games.",
+  "private": true,
+  "main": "backend/src/server.js",
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "test": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

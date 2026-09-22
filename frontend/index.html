@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0c0e13">
+  <title>Game Creator Chatbot</title>
+  <link rel="stylesheet" href="./src/styles/main.css">
+  <script>
+    // Applied synchronously, before first paint, so a saved light-theme choice
+    // never flashes dark first. Kept out of main.js (a deferred module) on purpose.
+    try {
+      if (localStorage.getItem('gc_theme') === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    } catch (e) { /* storage unavailable; default (dark) theme is used */ }
+  </script>
+</head>
+<body>
+  <div class="app" id="app">
+    <section class="chat" aria-label="Chat">
+      <header class="chat-head">
+        <div class="brand"><span class="logo" aria-hidden="true">🎮</span><h1>Game Creator</h1></div>
+        <div class="head-actions">
+          <button class="ghost theme-toggle" id="themeToggle" type="button" aria-label="Switch to light theme">🌙</button>
+          <button class="ghost" id="newChat" type="button">New chat</button>
+        </div>
+      </header>
+
+      <div class="banner" id="banner" hidden></div>
+
+      <main class="messages" id="messages" aria-live="polite"></main>
+
+      <div class="status" id="status" hidden></div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <textarea id="input" rows="1" maxlength="4000" placeholder="Describe a game idea, or just chat…" aria-label="Message"></textarea>
+        <button type="submit" id="send">Send</button>
+        <button type="button" id="stop" class="ghost" hidden>Stop</button>
+      </form>
+    </section>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

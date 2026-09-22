@@ -1,0 +1,364 @@
+/* ==========================================================================
+   Design tokens
+   Layered dark-charcoal surfaces (never pure black), one consistent accent.
+   Dark is the default; light is available via an explicit in-app toggle
+   (data-theme="light" on <html>), never silently from OS/browser preference
+   -- that's what made the redesign invisible to a user whose OS was in light
+   mode the first time around.
+   ========================================================================== */
+:root {
+  --bg: #0c0e13;
+  --surface-1: #14161d;
+  --surface-2: #1a1d27;
+  --surface-3: #232734;
+  --border: #262a37;
+  --border-strong: #343a4a;
+
+  --text: #e9eaf0;
+  --text-secondary: #a4aabb;
+  --text-tertiary: #6d7288;
+
+  --accent: #6d7bff;
+  --accent-hover: #818dff;
+  --accent-active: #5c6ae8;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(109, 123, 255, 0.14);
+  --accent-soft-strong: rgba(109, 123, 255, 0.24);
+
+  --user-bubble: #2a2f57;
+  --danger: #f16d84;
+  --danger-soft: rgba(241, 109, 132, 0.1);
+  --success: #3ecf8e;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-focus: 0 0 0 3px var(--accent-soft-strong);
+
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --content-max: 880px;
+  --gutter: clamp(16px, 4vw, 56px);
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f5f8;
+  --surface-1: #ffffff;
+  --surface-2: #f7f8fb;
+  --surface-3: #eef0f6;
+  --border: #e1e4ec;
+  --border-strong: #cdd2e0;
+
+  --text: #191b23;
+  --text-secondary: #5b6072;
+  --text-tertiary: #888ea1;
+
+  --accent: #5a63e0;
+  --accent-hover: #6d75e8;
+  --accent-active: #4a52c9;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(90, 99, 224, 0.1);
+  --accent-soft-strong: rgba(90, 99, 224, 0.2);
+
+  --user-bubble: #e4e6fb;
+  --danger: #d43757;
+  --danger-soft: rgba(212, 55, 87, 0.08);
+  --success: #1c9d67;
+
+  --shadow-sm: 0 1px 2px rgba(20, 22, 40, 0.06);
+  --shadow-md: 0 8px 24px rgba(20, 22, 40, 0.1);
+
+  color-scheme: light;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body, .chat, .chat-head, .messages, .msg, .plan-card, .design-summary-card, .composer textarea, .banner {
+    transition: background-color 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
+  }
+}
+
+::selection { background: var(--accent-soft-strong); }
+
+/* A slim, unobtrusive scrollbar that still matches the theme. */
+.messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.messages::-webkit-scrollbar { width: 9px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--surface-1);
+}
+.messages::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .messages { scroll-behavior: smooth; }
+}
+
+/* ==========================================================================
+   Shell
+   ========================================================================== */
+.app { display: flex; height: 100dvh; background: var(--bg); }
+.chat { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; background: var(--surface-1); }
+
+.chat-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px var(--gutter);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand .logo {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; font-size: 17px; line-height: 1;
+  background: var(--accent-soft); border-radius: var(--radius-sm);
+}
+.brand h1 { font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; margin: 0; color: var(--text); }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; font-size: 15px; line-height: 1;
+}
+
+/* ==========================================================================
+   Buttons & controls
+   Every interactive/active element shares the same accent color.
+   ========================================================================== */
+button, .btn {
+  font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: var(--radius-sm);
+  padding: 8px 16px; font-weight: 600; font-size: 13.5px; letter-spacing: 0.01em;
+  background: var(--accent); color: var(--accent-text); text-decoration: none; display: inline-block;
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease),
+    transform 0.1s var(--ease), box-shadow 0.15s var(--ease), opacity 0.15s var(--ease);
+}
+button:hover, .btn:hover { background: var(--accent-hover); }
+button:active, .btn:active { background: var(--accent-active); transform: translateY(1px); }
+button:disabled { opacity: 0.45; cursor: default; transform: none; }
+button:disabled:hover { background: var(--accent); }
+
+button.ghost, .btn.ghost {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font-weight: 550;
+}
+button.ghost:hover, .btn.ghost:hover { background: var(--surface-3); border-color: var(--border-strong); }
+button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform: translateY(1px); }
+
+:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm);
+}
+
+/* ==========================================================================
+   Banner
+   ========================================================================== */
+.banner {
+  margin: 12px var(--gutter) 0; padding: 11px 14px; border-radius: var(--radius-sm);
+  background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
+  font-size: 13.5px; line-height: 1.5;
+}
+
+/* ==========================================================================
+   Messages
+   ========================================================================== */
+.messages {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 24px var(--gutter);
+  display: flex; flex-direction: column; gap: 14px;
+  max-width: var(--content-max); width: 100%; margin: 0 auto;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .msg, .plan-card { animation: rise-in 0.28s var(--ease) both; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg {
+  max-width: 90%; padding: 11px 15px; border-radius: 18px; overflow-wrap: anywhere;
+  font-size: 14.5px; line-height: 1.6;
+}
+.msg.user {
+  align-self: flex-end; background: var(--user-bubble); color: var(--text);
+  border-bottom-right-radius: 5px; white-space: pre-wrap;
+}
+.msg.assistant {
+  align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border);
+  border-bottom-left-radius: 5px;
+}
+.msg.error {
+  align-self: flex-start; background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
+}
+.msg.error::before { content: "⚠ "; }
+
+.msg p { margin: 0 0 8px; }
+.msg > :last-child { margin-bottom: 0; }
+.msg > :last-child > :last-child { margin-bottom: 0; }
+.msg h3, .msg h4 { margin: 14px 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+.msg ul, .msg ol { margin: 0 0 8px; padding-left: 22px; }
+.msg li { margin: 2px 0; }
+.msg code {
+  background: var(--bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 5px;
+  font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+.msg pre {
+  background: var(--bg); border: 1px solid var(--border); padding: 12px 14px; border-radius: var(--radius-sm);
+  overflow-x: auto; margin: 0 0 8px;
+}
+.msg pre code { padding: 0; border: 0; background: none; }
+.msg hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+
+.game-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 12px; margin-right: 8px; padding: 8px 16px;
+  border-radius: var(--radius-sm); font-size: 13.5px; font-weight: 600;
+  background: var(--accent); color: var(--accent-text); text-decoration: none;
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.1s var(--ease);
+}
+.game-link:hover { background: var(--accent-hover); }
+.game-link:active { transform: translateY(1px); }
+.game-link.ghost { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font-weight: 550; }
+.game-link.ghost:hover { background: var(--surface-3); border-color: var(--border-strong); }
+
+/* ==========================================================================
+   Planning feed
+   Deliberately secondary/quiet: smaller text, muted colors, a subtle
+   background, minimal spacing -- and nothing like the Game Design Summary
+   card below it.
+   ========================================================================== */
+.plan-card {
+  align-self: flex-start; max-width: 90%;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 13px; font-size: 12.5px; line-height: 1.55; color: var(--text-secondary);
+}
+.plan-head {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+  font-weight: 650; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.plan-step { display: flex; align-items: center; gap: 7px; transition: color 0.2s var(--ease); }
+.plan-icon {
+  width: 12px; height: 12px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; line-height: 1;
+}
+.plan-icon.plan-spin {
+  border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%;
+  animation: plan-spin 0.75s linear infinite;
+}
+.plan-icon.plan-done { color: var(--success); font-weight: 700; }
+.plan-icon.plan-error { color: var(--danger); font-weight: 700; }
+@keyframes plan-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-icon.plan-spin { animation: none; border-top-color: var(--border-strong); }
+  .msg, .plan-card { animation: none; }
+}
+
+/* ==========================================================================
+   Game Design Summary
+   A distinct, polished document-style card -- never styled like Planning.
+   ========================================================================== */
+.design-summary-card {
+  margin: 12px 0; border-radius: var(--radius-md);
+  background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.design-summary-head {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 700; font-size: 12.5px; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft);
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.design-summary-card > div:last-child { padding: 6px 16px 10px; }
+.design-summary-card p {
+  margin: 0; padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 14px; line-height: 1.55;
+}
+.design-summary-card p:last-child { border-bottom: 0; }
+.design-summary-card strong { color: var(--accent); font-weight: 650; margin-right: 4px; }
+.msg > .design-summary-card:first-child { margin-top: 0; }
+.msg > .design-summary-card:last-child { margin-bottom: 0; }
+
+/* ==========================================================================
+   Welcome screen
+   ========================================================================== */
+.welcome { margin: auto; text-align: center; color: var(--text-secondary); max-width: 420px; }
+.welcome h2 { color: var(--text); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; }
+.welcome p { margin: 0; line-height: 1.6; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+.chips button {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-pill); font-weight: 550; padding: 9px 16px;
+}
+.chips button:hover { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
+.chips button:active { transform: translateY(0); }
+
+/* ==========================================================================
+   Status ("thinking") indicator
+   ========================================================================== */
+.status {
+  padding: 6px var(--gutter); font-size: 12.5px; color: var(--text-tertiary);
+  display: flex; align-items: center; gap: 8px; max-width: var(--content-max); margin: 0 auto; width: 100%;
+}
+.status::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
+  animation: pulse 1.1s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .status::before { animation: none; } }
+
+/* ==========================================================================
+   Composer
+   ========================================================================== */
+.composer {
+  display: flex; gap: 10px; align-items: flex-end;
+  padding: 14px var(--gutter) 18px;
+  max-width: var(--content-max); width: 100%; margin: 0 auto;
+}
+.composer textarea {
+  flex: 1; resize: none; max-height: 160px; font: inherit; font-size: 14.5px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 11px 14px; line-height: 1.5;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), background-color 0.15s var(--ease);
+}
+.composer textarea::placeholder { color: var(--text-tertiary); }
+.composer textarea:hover { border-color: var(--border-strong); }
+.composer textarea:focus-visible {
+  outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); background: var(--surface-1);
+}
+.composer button { border-radius: var(--radius-md); padding: 11px 20px; }
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+@media (max-width: 640px) {
+  .brand h1 { font-size: 14.5px; }
+  .msg { max-width: 96%; font-size: 14px; }
+  .plan-card { max-width: 96%; }
+  .welcome h2 { font-size: 19px; }
+  .composer { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+}
+@media (max-width: 400px) {
+  .head-actions button { padding: 7px 12px; font-size: 12.5px; }
+  .composer button { padding: 10px 14px; }
+}
