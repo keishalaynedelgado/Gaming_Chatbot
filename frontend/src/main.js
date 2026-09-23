@@ -1,4 +1,5 @@
 'use strict';
+import { initSidebar } from './chats.js';
 
 const AGENTS = {
   intent: 'Understanding your request',
@@ -18,6 +19,8 @@ const els = {
 
 let sessionId = null;
 let controller = null;
+let messages = []; // the active chat's history, mirrored to the sidebar after every turn
+let currentGameUrl = null; // persists across turns once a game exists, even on turns that don't rebuild it
 
 // ---------------------------------------------------------------- Theme
 // Dark is the default; light is available but only ever applied by an
@@ -45,27 +48,6 @@ function toggleTheme() {
     localStorage.setItem('gc_theme', next);
   } catch {
     /* storage unavailable; the choice just won't survive a reload */
-  }
-}
-
-// ---------------------------------------------------------------- Session
-function newId() {
-  return crypto.randomUUID();
-}
-
-function loadSessionId() {
-  try {
-    return localStorage.getItem('gc_session') || null;
-  } catch {
-    return null;
-  }
-}
-
-function storeSessionId(id) {
-  try {
-    localStorage.setItem('gc_session', id);
-  } catch {
-    /* storage unavailable, the session just will not survive a reload */
   }
 }
 
@@ -303,6 +285,7 @@ async function send(text) {
   if (!text || controller) return;
   els.messages.querySelector('.welcome')?.remove();
   addMessage('user', text);
+  messages.push({ role: 'user', content: text });
   els.input.value = '';
   autoGrow();
 
@@ -326,6 +309,7 @@ async function send(text) {
       // The game event arrives before the notes/QA text for this turn, so open the
       // tab immediately; the link is attached to the bubble once it exists below.
       builtGameUrl = evt.url;
+      currentGameUrl = evt.url;
       openGame(evt.url);
     } else if (evt.type === 'plan') {
       if (evt.op === 'start') plan = planStart();
@@ -338,7 +322,8 @@ async function send(text) {
       // the previous one's. The message that triggered this (already shown
       // above) is re-added so the new chat starts from it.
       sessionId = evt.id;
-      storeSessionId(sessionId);
+      messages = [{ role: 'user', content: text }];
+      currentGameUrl = null;
       els.messages.innerHTML = '';
       addMessage('user', text);
       bubble = null;
@@ -375,6 +360,7 @@ async function send(text) {
       }
     }
     if (bubble) renderAssistantContent(bubble, raw);
+    if (raw) messages.push({ role: 'assistant', content: raw });
     if (builtGameUrl) appendGameLink(builtGameUrl, bubble);
   } catch (err) {
     if (err.name === 'AbortError') addMessage('error', 'Stopped. That message was not saved, so feel free to send it again.');
@@ -382,26 +368,52 @@ async function send(text) {
   } finally {
     controller = null;
     setBusy(false);
+    sidebar.recordActivity(sessionId, { messages, hasGame: Boolean(currentGameUrl), gameUrl: currentGameUrl });
   }
 }
 
-async function loadSession() {
+// Loads one chat's full history from the server (the authoritative copy --
+// see chats.js) and renders it, replacing whatever was shown before. Used
+// both for the initial page load and every sidebar chat switch.
+async function loadChat(id) {
+  if (controller) return;
+  sessionId = id;
   try {
-    const res = await fetch(`/api/session/${sessionId}`);
+    const res = await fetch(`/api/session/${id}`);
     if (!res.ok) throw new Error();
     const data = await res.json();
-    if (!data.messages.length) return showWelcome();
-    els.messages.innerHTML = '';
-    let lastAssistant = null;
-    for (const m of data.messages) {
-      const div = addMessage(m.role, m.content);
-      if (m.role === 'assistant') lastAssistant = div;
+    messages = data.messages.slice();
+    currentGameUrl = data.gameUrl;
+    if (!data.messages.length) {
+      showWelcome();
+    } else {
+      els.messages.innerHTML = '';
+      let lastAssistant = null;
+      for (const m of data.messages) {
+        const div = addMessage(m.role, m.content);
+        if (m.role === 'assistant') lastAssistant = div;
+      }
+      // Don't auto-open a tab just from loading/reloading the chat; only offer the link.
+      if (data.gameUrl) appendGameLink(data.gameUrl, lastAssistant);
     }
-    // Don't auto-open a tab just from loading/reloading the chat; only offer the link.
-    if (data.gameUrl) appendGameLink(data.gameUrl, lastAssistant);
+    sidebar.refreshCache(id, { messages, hasGame: data.hasGame, gameUrl: data.gameUrl });
   } catch {
+    messages = [];
+    currentGameUrl = null;
     showWelcome();
   }
+}
+
+// Starts a brand new, empty chat -- generates a fresh id but does not touch
+// the sidebar's saved list at all (chats.js only ever adds an entry once a
+// chat actually has a message, so an unused draft just quietly disappears).
+function startNewDraft() {
+  if (controller) return;
+  sessionId = crypto.randomUUID();
+  messages = [];
+  currentGameUrl = null;
+  showWelcome();
+  els.input.focus();
 }
 
 async function checkHealth() {
@@ -430,15 +442,10 @@ els.input.addEventListener('keydown', (e) => {
 });
 els.stop.addEventListener('click', () => controller?.abort());
 els.themeToggle?.addEventListener('click', toggleTheme);
-$('newChat').addEventListener('click', () => {
-  if (controller) return;
-  sessionId = newId();
-  storeSessionId(sessionId);
-  showWelcome();
-});
 
 applyTheme(currentTheme()); // sync the toggle button's icon/label to whatever index.html already applied
-sessionId = loadSessionId() || newId();
-storeSessionId(sessionId);
+const sidebar = initSidebar({ onSelect: loadChat, onNewDraft: startNewDraft });
 checkHealth();
-loadSession();
+const initialId = sidebar.getActiveId();
+if (initialId) loadChat(initialId);
+else startNewDraft();

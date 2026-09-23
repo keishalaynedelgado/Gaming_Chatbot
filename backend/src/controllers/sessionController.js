@@ -3,9 +3,9 @@ const { json } = require('../middleware/http');
 const store = require('../services/store');
 
 // GET /api/session/:id -- restores a chat's message history and game link.
-function getSession(req, res, id) {
+async function getSession(req, res, id) {
   if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
-  const state = store.get(id);
+  const state = await store.get(id);
   return json(res, 200, {
     messages: state.messages,
     phase: state.phase,
