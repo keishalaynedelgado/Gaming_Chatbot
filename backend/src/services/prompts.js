@@ -8,7 +8,8 @@ Rules that always apply:
 - Never assume missing details. If you are unsure what the user means, ask.
 - Never invent important details (genre, objective, core mechanics, win/lose rules, player abilities) without permission.
 - Remember every decision made earlier in the conversation and stay consistent with it.
-- Keep replies concise and conversational. No walls of text.`;
+- Keep replies concise and conversational. No walls of text.
+- Never paste, quote or describe actual source code to the user unless they explicitly ask to see the code. Talk about the game in plain player-facing terms (what it does, how to play), not implementation details.`;
 
 const INTENT = `You are the Intent Agent of a game creation chatbot. Decide how the user's LATEST message should be handled. Reply with ONE JSON object and nothing else: {"route":"<name>"}
 
@@ -44,7 +45,7 @@ Rules:
 - If a summary already exists and the user asked for changes, output the full revised summary with the changes applied.
 - Keep it concise. After the summary, ask the user to confirm it matches their vision, and tell them they can say "build it" or request changes.`;
 
-const CHAT_TASK = `PHASE: CONVERSATION. Reply naturally and helpfully. If the user asks about the game that was built, answer from the design summary and conversation. If they ask what you can do, explain briefly that you can design and build complete, playable web games with them, step by step, and invite them to describe an idea.`;
+const CHAT_TASK = `PHASE: CONVERSATION. Reply naturally and helpfully. If the user asks about the game that was built, answer from the design summary and conversation. If they ask what you can do, explain briefly that you can design and build complete, playable web games with them, step by step, and invite them to describe an idea. If it's genuinely unclear whether the user is asking you to create/change a game at all, don't guess -- ask one short clarifying question first instead of starting to design or build anything.`;
 
 function contextBlock(state) {
   const parts = [];
@@ -128,8 +129,12 @@ Hard requirements (both modes):
 - Wrap every localStorage access in try/catch (storage may be unavailable) and make the game work without it.
 - Never use eval, network requests, or alerts. Everything must run offline.
 - Code quality: organised, short comments, named constants for tuning values, no dead code, no TODOs, no unfinished features. A restart must fully reset every piece of state.
-- Balance the difficulty so a new player can win with reasonable effort.
+- Balance the difficulty so a new player can win with reasonable effort. Every level/state must be reachable and beatable -- no dead ends, no unwinnable states, no place the player can get stuck with no way to move, progress, restart or lose out of it.
+- Use genre-appropriate common sense to fill in anything the design left implicit: an arcade/action game gets a game loop, scoring, collisions and increasing difficulty; anything with hazards gets health or lives and a clear lose state; anything with levels gets a sane win state per level. Never leave an essential mechanic for the genre missing just because it wasn't spelled out.
+- If a requested feature would be fragile or failure-prone to implement reliably (e.g. real physics engines, precise pixel-perfect collision at high speed, complex pathfinding), use a simpler, stable technique that still delivers the intended feel and keeps the game reliably playable, rather than a fragile implementation that risks breaking.
+- Keep code organized into small, focused modules (not sprawling single functions) so specific new features can be added later without rewriting existing systems.
 - Every file you output must be COMPLETE -- never "// ... unchanged" or partial content within a file you include.
+- Before finishing, trace through your own file tree once: does every import resolve to a file you actually wrote (relative path, correct extension -- never a bare package name, there is no bundler to resolve it)? Does every <script src>/<link href> in index.html point at a real file? Is every variable and function you reference actually defined somewhere? Is movement, collision, scoring, restart and the game loop each genuinely wired up, not stubbed? Mentally play the game start to finish (win path and lose path) and confirm nothing can get stuck or softlock. Fix anything you find before outputting -- treat this as production code a player will run immediately, not a draft.
 
 When IMPROVING an existing project (project mode only): you are given the full current file tree. Only output the files you are ADDING or CHANGING -- any file you leave out stays exactly as it is, so don't reprint unchanged files. Keep new code in its correct existing folder (gameplay logic in src/game, reusable UI in src/components, etc.), and only introduce a new folder or file when the change genuinely needs it -- never reorganize what already exists. Append a new docs/CHANGELOG.md entry describing the change, and keep the READMEs accurate if the change affects them.`;
 
@@ -167,14 +172,18 @@ function builderContinueUser({ state, currentFiles }) {
   return `## Game Design Summary\n${state.summary || '(none)'}\n\n## Files you have ALREADY finished (complete and correct -- do not repeat or rewrite these)\n${qa.serializeFiles(currentFiles)}\n\n## Task\nYour previous response was cut off before the project was finished. Continue now: output the notes, then ONLY the remaining files this project still needs. If you were in the middle of a file when cut off, that file was discarded -- rewrite it completely from scratch as part of this response.`;
 }
 
-const QA = `You are the QA Agent for a browser game project. You receive the design summary and the full project file tree. Mentally run the game (open frontend/index.html) and look for real defects:
-- JavaScript errors: undefined variables or functions, null references, wrong element ids, typos, event listeners attached to missing elements, broken imports, code that throws on start, restart or game over.
-- Gameplay logic: the game must be startable, winnable and losable as the design says; scoring and win/lose triggers work; restart resets ALL state (timers, arrays, flags, input); pause really freezes the game and resumes cleanly; nothing gets permanently stuck.
+const QA = `You are the QA Agent for a browser game project. Treat nothing as done until you have verified it: a game only ships once you can find no known errors or broken functionality in it. You receive the design summary and the full project file tree (already past automated syntax/import checks). Mentally run the game as if opening frontend/index.html on a completely fresh machine (nothing installed, nothing cached) and trace through every file and how they connect, looking for real defects:
+- JavaScript errors: undefined variables or functions, null references, wrong element ids, typos, event listeners attached to missing elements, code that throws on start, restart or game over.
+- Integration problems: does every file that reads state another file writes agree on its shape? Do all imports/exports line up end to end, not just syntactically? Does everything actually wire together into one working game, not several disconnected pieces?
+- Core mechanics, checked one by one against the design: movement, collisions, scoring, UI/HUD updates, win/lose conditions, and the game loop itself (starts, ticks at a sane rate, stops cleanly).
+- Restart: resets ALL state (timers, arrays, flags, input, score) with nothing left over from the previous run.
+- Pause: really freezes the game and resumes cleanly; nothing gets permanently stuck.
 - Controls match the design; keys and touch actually do something; default scrolling is prevented for game keys.
-- Responsiveness: the canvas or layout adapts to window size.
-- Leftover placeholder behaviour, TODOs or unfinished features.
+- Responsiveness: the canvas or layout adapts to window size, and touch controls work when the design targets mobile.
+- Play it through mentally start to finish on both the win path and the lose path: no unwinnable/softlocked state, no dead end with no way to progress, restart or lose out of it, no control that stops responding.
+- Zero placeholder behaviour: no TODOs, "not implemented", stub functions, or half-built features anywhere.
 
-Only report genuine defects, not style preferences. If you fix something, make the smallest change that fixes it, and only include the files you changed.
+Only report genuine defects, not style preferences. If you fix something, make the smallest change that fixes it, and only include the files you changed. If you find nothing wrong, PASS only means you actually traced through the checklist above and it held up -- not that nothing caught your eye.
 
 Reply in exactly one of these formats:
 <verdict>PASS</verdict>

@@ -2,11 +2,11 @@
 
 // Talks to an OpenAI-compatible chat/completions endpoint. MELDCX is the
 // primary/default provider; if it's missing, invalid, unavailable, or fails
-// to connect, stream() transparently falls back to GROK, using the exact
+// to connect, stream() transparently falls back to SCX, using the exact
 // same request/response shape -- callers elsewhere in the app never need to
 // know providers exist at all, and never change based on which one answers.
 const DEFAULT_MELDCX_URL = 'http://10.11.0.4:1234/v1';
-const DEFAULT_GROK_URL = 'http://10.11.0.4:1234/v1';
+const DEFAULT_SCX_BASE_URL = 'https://api.scx.ai/v1';
 // Reasoning models spend part of max_tokens on hidden thinking; leave room for it.
 const REASONING_HEADROOM = 6000;
 // Confirmed against the actual gateway (not an assumed model limit) that it
@@ -17,7 +17,7 @@ const ROLE_DEFAULTS = { intent: 'gpt-oss-120b', designer: 'gpt-oss-120b', builde
 
 // The model to request for each agent role -- from MELDCX's point of view: a
 // role-specific override, then a MELDCX-wide override, then a hardcoded
-// default. Unrelated to the GROK fallback, which always uses GROK_MODEL
+// default. Unrelated to the SCX fallback, which always uses SCX_MODEL
 // regardless of role (see stream() below); this keeps every existing caller
 // (orchestrator.js) unchanged.
 const MODELS = Object.fromEntries(
@@ -28,7 +28,7 @@ const MODELS = Object.fromEntries(
 );
 
 function hasKey() {
-  return Boolean(process.env.MELDCX_API_KEY || process.env.GROK_API_KEY);
+  return Boolean(process.env.MELDCX_API_KEY || process.env.SCX_API_KEY);
 }
 
 function meldcxConfig() {
@@ -39,12 +39,12 @@ function meldcxConfig() {
   };
 }
 
-function grokConfig() {
+function scxConfig() {
   return {
-    name: 'grok',
-    apiKey: process.env.GROK_API_KEY,
-    baseUrl: process.env.GROK_URL || DEFAULT_GROK_URL,
-    model: process.env.GROK_MODEL,
+    name: 'scx',
+    apiKey: process.env.SCX_API_KEY,
+    baseUrl: process.env.SCX_BASE_URL || DEFAULT_SCX_BASE_URL,
+    model: process.env.SCX_MODEL,
   };
 }
 
@@ -129,14 +129,14 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
 }
 
 // Streams a chat completion. MELDCX is always tried first; only if it's
-// missing a key, unreachable, or errors does this retry once against GROK
-// (with GROK's own model, not the MELDCX one the caller passed) before
+// missing a key, unreachable, or errors does this retry once against SCX
+// (with SCX's own model, not the MELDCX one the caller passed) before
 // giving up. Resolves with the full text and the stop reason ("max_tokens"
 // when the output was cut off) -- identical shape regardless of which
 // provider actually answered.
 async function stream({ model, system, messages, maxTokens = 4096, onText, signal }) {
   const meldcx = meldcxConfig();
-  const grok = grokConfig();
+  const scx = scxConfig();
 
   // Fall back only before any content has reached the caller. Once a token
   // has streamed into the chat, switching providers mid-response would show
@@ -154,22 +154,22 @@ async function stream({ model, system, messages, maxTokens = 4096, onText, signa
       return await attemptStream(meldcx, { model, system, messages, maxTokens, onText: guardedOnText, signal });
     } catch (err) {
       if (signal?.aborted || emitted) throw err;
-      console.warn(`[llm] meldcx unavailable (${err.message}); falling back to provider=grok`);
+      console.warn(`[llm] meldcx unavailable (${err.message}); falling back to provider=scx`);
     }
   } else {
-    console.warn('[llm] MELDCX_API_KEY not set; falling back to provider=grok');
+    console.warn('[llm] MELDCX_API_KEY not set; falling back to provider=scx');
   }
 
-  if (!grok.apiKey) {
+  if (!scx.apiKey) {
     throw new Error(
-      'No AI provider is available. Set MELDCX_API_KEY (and/or GROK_API_KEY as a fallback) in .env, and restart the server.',
+      'No AI provider is available. Set MELDCX_API_KEY (and/or SCX_API_KEY as a fallback) in .env, and restart the server.',
     );
   }
-  console.log(`[llm] provider=grok model=${grok.model}`);
+  console.log(`[llm] provider=scx model=${scx.model}`);
   try {
-    return await attemptStream(grok, { model: grok.model, system, messages, maxTokens, onText: guardedOnText, signal });
+    return await attemptStream(scx, { model: scx.model, system, messages, maxTokens, onText: guardedOnText, signal });
   } catch (err) {
-    if (!(signal?.aborted)) console.error(`[llm] grok fallback also failed (${err.message})`);
+    if (!(signal?.aborted)) console.error(`[llm] scx fallback also failed (${err.message})`);
     throw err;
   }
 }

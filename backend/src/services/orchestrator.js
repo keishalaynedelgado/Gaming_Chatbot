@@ -148,7 +148,7 @@ function formatGameDesignDoc(summary) {
 async function buildGame({ id, state, message, mode, emit, signal }) {
   emit({ type: 'plan', op: 'start' });
   try {
-    const currentFiles = mode === 'improve' ? store.readProjectFiles(id, state) : null;
+    const currentFiles = mode === 'improve' ? await store.readProjectFiles(id, state) : null;
     const history = state.messages.slice(state.historyStart);
     const todayISO = new Date().toISOString().slice(0, 10);
     // Prototype mode is only ever chosen explicitly, and only for a fresh build --
@@ -177,15 +177,23 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
     // up to a couple of rounds -- before treating it as a real failure.
     for (let round = 0; truncated && round < 2; round += 1) {
       emit({ type: 'plan', op: 'step', label: 'Continuing (the project is large).' });
-      const cont = await runBuilder({
-        user: prompts.builderContinueUser({ state, currentFiles: project }),
-        emit,
-        signal,
-        scan,
-      });
-      project = { ...project, ...cont.files };
-      notes = cont.notes || notes;
-      truncated = cont.truncated;
+      try {
+        const cont = await runBuilder({
+          user: prompts.builderContinueUser({ state, currentFiles: project }),
+          emit,
+          signal,
+          scan,
+        });
+        project = { ...project, ...cont.files };
+        notes = cont.notes || notes;
+        truncated = cont.truncated;
+      } catch (err) {
+        // Same reasoning as the repair loop below: one bad continuation reply
+        // must not abort the build outright -- let the loop retry, or fall
+        // through to the clear final error once rounds are exhausted.
+        if (signal?.aborted) throw err;
+        console.warn(`[orchestrator] continuation attempt ${round + 1} failed (${err.message})`);
+      }
     }
     if (truncated) {
       throw new Error('The project was too large to finish even after continuing. Try asking for fewer features or a one-file prototype.');
@@ -197,15 +205,25 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
     for (let attempt = 0; check.errors.length && attempt < 2; attempt += 1) {
       emit({ type: 'agent', agent: 'builder', status: 'progress', detail: 'fixing problems found by QA' });
       emit({ type: 'plan', op: 'step', label: 'Fixing problems found while testing.' });
-      const fixed = await runBuilder({
-        user: prompts.builderRepairUser({ state, currentFiles: project, errors: check.errors }),
-        emit,
-        signal,
-        scan,
-      });
-      project = { ...project, ...fixed.files };
-      notes = fixed.notes || notes;
-      check = qa.staticCheck(project);
+      try {
+        const fixed = await runBuilder({
+          user: prompts.builderRepairUser({ state, currentFiles: project, errors: check.errors }),
+          emit,
+          signal,
+          scan,
+        });
+        project = { ...project, ...fixed.files };
+        notes = fixed.notes || notes;
+        check = qa.staticCheck(project);
+      } catch (err) {
+        // A single malformed repair reply (e.g. the model returned no files)
+        // must not abort the whole build -- that's exactly what the retry
+        // loop exists for. Leave `check` as-is so the loop either tries again
+        // or, once attempts are exhausted, falls through to the clear final
+        // error below instead of this one crashing the build outright.
+        if (signal?.aborted) throw err;
+        console.warn(`[orchestrator] repair attempt ${attempt + 1} failed (${err.message})`);
+      }
     }
     emit({ type: 'agent', agent: 'builder', status: 'done' });
     if (check.errors.length) {
@@ -252,7 +270,7 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
     if (!isPrototypeShape) project['docs/GAME_DESIGN.md'] = formatGameDesignDoc(state.summary);
 
     emit({ type: 'plan', op: 'step', label: mode === 'improve' ? 'Refreshing the playable version.' : 'Preparing the playable version.' });
-    const version = store.saveProject(id, state, project);
+    const version = await store.saveProject(id, state, project);
     state.phase = 'built';
     emit({ type: 'game', url: `/games/${id}/index.html?v=${version}`, version });
     emit({ type: 'plan', op: 'done' });
@@ -275,7 +293,7 @@ async function handleChat({ id, message, emit, signal }) {
   }
   busy.add(id);
   try {
-    let state = store.get(id);
+    let state = await store.get(id);
     let activeId = id;
     let freshStart = false;
 
@@ -290,7 +308,7 @@ async function handleChat({ id, message, emit, signal }) {
       // session (see buildGame/converse above) -- only this explicit "start
       // over with something different" case moves to a fresh one.
       activeId = randomUUID();
-      state = store.get(activeId);
+      state = await store.get(activeId);
       emit({ type: 'session', id: activeId });
       route = 'discover';
       freshStart = true;
@@ -301,7 +319,7 @@ async function handleChat({ id, message, emit, signal }) {
       : await converse(route, state, message, emit, signal, { freshStart });
 
     state.messages.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
-    store.save(activeId, state);
+    await store.save(activeId, state);
   } finally {
     busy.delete(id);
   }

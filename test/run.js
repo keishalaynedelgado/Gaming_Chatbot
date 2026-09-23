@@ -1,10 +1,27 @@
 'use strict';
-// End-to-end test against a mock OpenAI-compatible (MELDCX) API. No API key or network needed.
+// End-to-end test against a mock OpenAI-compatible (MELDCX) API and a real
+// (dedicated, disposable) PostgreSQL test database -- no API key and no
+// filesystem project storage needed anymore; see backend/src/services/db.js.
 const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
 const assert = require('node:assert/strict');
+const { Pool } = require('pg');
 const { staticCheck, extractFiles, isSafePath } = require('../backend/src/services/qa');
+
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgres://gamechatbot:gc_app_pw_2026@127.0.0.1:5432/gamechatbot_test';
+process.env.DATABASE_URL = TEST_DATABASE_URL;
+const testDb = new Pool({ connectionString: TEST_DATABASE_URL });
+
+async function dbFileExists(id, version, relPath) {
+  const { rows } = await testDb.query('SELECT 1 FROM game_files WHERE session_id = $1 AND version = $2 AND path = $3', [id, version, relPath]);
+  return rows.length > 0;
+}
+
+// The whole point of a session is that it can be deleted outright (cascades
+// to its messages and game_files via the FK) -- the equivalent of the old
+// fs.rmSync(projects/<id>, { recursive: true }) cleanup between test cases.
+async function cleanupSession(id) {
+  await testDb.query('DELETE FROM sessions WHERE id = $1', [id]);
+}
 
 const GOOD_INDEX = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width"></head><body><canvas id="c"></canvas><script type="module" src="./src/main.js"></script></body></html>`;
 const GOOD_MAIN = `import { start } from './game/loop.js';\nlet paused = false; function restart() {}\nwindow.addEventListener('keydown', (e) => { if (e.key === 'p') paused = !paused; });\nstart();\n`;
@@ -17,6 +34,7 @@ const GOOD_FILES = {
 const BAD_MAIN = GOOD_MAIN.replace('function restart() {}', 'function restart({}'); // syntax error
 
 let builderCalls = 0;
+let repairCalls = 0;
 let qaMode = 'PASS';
 
 function filesBlock(map) {
@@ -56,6 +74,13 @@ const mock = http.createServer((req, res) => {
       const isContinue = last.includes('Files you have ALREADY finished');
       const isImprove = !isRepair && !isContinue && last.includes('## Current project files');
       if (isRepair) {
+        repairCalls += 1;
+        // MOCK_EMPTY_REPAIR_FIRST emulates a malformed repair reply (no <files>
+        // block at all) on the first repair attempt only, to prove a second
+        // attempt still gets a chance instead of the whole build crashing.
+        if (process.env.MOCK_EMPTY_REPAIR_FIRST === '1' && repairCalls === 1) {
+          return sse(res, '<notes>Sorry, let me reconsider that.</notes>');
+        }
         return sse(res, `<notes>Built it. Arrow keys move.</notes>\n<files>\n${filesBlock({ 'frontend/src/main.js': GOOD_MAIN })}\n</files>`);
       }
       if (isContinue) {
@@ -109,6 +134,17 @@ async function main() {
   assert.ok(staticCheck({}).errors.length > 0);
   assert.ok(staticCheck({ 'frontend/src/main.js': GOOD_MAIN }).errors.some((e) => e.includes('Missing frontend/index.html')));
 
+  // A bare import specifier (no bundler/import map in a browser) must be caught.
+  const bareImport = { ...GOOD_FILES, 'frontend/src/game/loop.js': GOOD_LOOP.replace('export function', "import 'phaser';\nexport function") };
+  assert.ok(staticCheck(bareImport).errors.some((e) => e.includes('bare module specifier')), 'bare import specifier should error');
+  // An entry file referencing a script/stylesheet that was never generated must be caught.
+  const brokenEntryRef = { ...GOOD_FILES, 'frontend/index.html': GOOD_INDEX.replace('./src/main.js', './src/missing.js') };
+  assert.ok(staticCheck(brokenEntryRef).errors.some((e) => e.includes('missing.js') && e.includes('was not generated')), 'broken entry file reference should error');
+  // Importing a name and also re-declaring it locally is a real SyntaxError in a
+  // browser, but invisible to a check that strips imports before parsing.
+  const dupeDecl = { ...GOOD_FILES, 'frontend/src/main.js': `${GOOD_MAIN}\nfunction start() { return 1; }\n` };
+  assert.ok(staticCheck(dupeDecl).errors.some((e) => e.includes('"start"') && e.includes('already been declared')), 'import name re-declared locally should error');
+
   const parsed = extractFiles(`<files>\n${filesBlock(GOOD_FILES)}\n</files>`);
   // extractFiles trims exactly one trailing newline per file (so round-tripping
   // through serialize+extract doesn't accumulate blank lines); compare modulo that.
@@ -137,7 +173,12 @@ async function main() {
   process.env.PORT = String(port);
   process.env.MOCK_BAD_FIRST = '1';
   require('../backend/src/server');
-  await new Promise((r) => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 500)); // now includes a real db.migrate() round trip before listen()
+
+  // A dedicated, disposable database -- safe to wipe clean before every run
+  // rather than only relying on each test case's own cleanup, in case a
+  // previous run crashed mid-test and left rows behind.
+  await testDb.query('TRUNCATE sessions CASCADE');
 
   const id = `test-${Date.now()}`;
   const text = (evts) => evts.filter((e) => e.type === 'text').map((e) => e.delta).join('');
@@ -168,6 +209,28 @@ async function main() {
   assert.equal(served.status, 200);
   assert.ok(served.headers.get('content-security-policy').includes('sandbox'));
   assert.equal(await served.text(), GOOD_INDEX);
+
+  // A host bundler.needsBundling() flags (e.g. an ngrok free-tier tunnel) must
+  // get the entry script inlined into one dependency-free <script>, since the
+  // extra per-file <script src> request would otherwise hit that tunnel's own
+  // warning interstitial before ever reaching this server (see bundler.js).
+  const tunneled = await new Promise((resolve, reject) => {
+    http
+      .get({ hostname: '127.0.0.1', port, path: game.url, headers: { host: 'demo.ngrok-free.dev' } }, (res) => {
+        let body = '';
+        res.on('data', (c) => (body += c));
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      })
+      .on('error', reject);
+  });
+  assert.equal(tunneled.status, 200);
+  assert.ok(!tunneled.body.includes('<script type="module" src='), 'a tunneled host must get the entry script inlined, not referenced by src');
+  assert.ok(tunneled.body.includes('__require("frontend/src/main.js")'), 'the inlined bundle must actually run the entry module');
+  assert.ok(tunneled.body.includes('function start()'), "the bundle must contain the real module code (loop.js's start), not a stub");
+  // A normal (non-tunnel) host must be completely unaffected -- still the
+  // original, unbundled multi-file project, exactly as generated.
+  assert.equal(await (await fetch(`http://127.0.0.1:${port}${game.url}`)).text(), GOOD_INDEX, 'a normal host must still get the original, unbundled file');
+
   const servedJs = await fetch(`http://127.0.0.1:${port}/games/${id}/src/game/loop.js`);
   assert.equal(servedJs.status, 200);
   assert.equal((await servedJs.text()).trim(), GOOD_LOOP.trim());
@@ -200,7 +263,7 @@ async function main() {
   assert.ok((await changed.text()).includes('/* faster */'), 'changed file must reflect the new version');
 
   // Old version (v1) must still exist on disk for history/rollback.
-  assert.ok(fs.existsSync(path.join(__dirname, '..', 'projects', id, 'v1', 'frontend', 'index.html')));
+  assert.ok(await dbFileExists(id, 1, 'frontend/index.html'));
 
   // A build that gets cut off by the token limit must continue from exactly
   // what it already finished, rather than fail and discard everything.
@@ -217,7 +280,24 @@ async function main() {
   const mainAfterContinue = await fetch(`http://127.0.0.1:${port}/games/${id2}/src/main.js`);
   assert.equal((await mainAfterContinue.text()).trim(), GOOD_MAIN.trim(), 'the file that was mid-write must be rewritten complete, not left truncated');
   process.env.MOCK_TRUNCATE_FIRST = '0';
-  fs.rmSync(path.join(__dirname, '..', 'projects', id2), { recursive: true, force: true });
+  await cleanupSession(id2);
+
+  // A malformed repair reply (the model returns no files) must not abort the
+  // whole build -- the retry loop must actually get its second attempt.
+  const id3 = `test-repair-resilience-${Date.now()}`;
+  await chat(port, id3, 'route:plan enough info');
+  builderCalls = 0;
+  repairCalls = 0;
+  process.env.MOCK_BAD_FIRST = '1'; // fresh build has a syntax error -> needs repair
+  process.env.MOCK_EMPTY_REPAIR_FIRST = '1'; // ...and the first repair attempt comes back empty
+  evts = await chat(port, id3, 'route:build yes build it');
+  assert.equal(repairCalls, 2, 'a malformed repair reply must not consume the whole retry budget in one shot');
+  assert.ok(!evts.some((e) => e.type === 'error'), 'the build must still succeed once the second repair attempt works');
+  const game4 = evts.find((e) => e.type === 'game');
+  assert.ok(game4 && game4.version === 1, 'the game must still get built despite the mid-repair hiccup');
+  process.env.MOCK_BAD_FIRST = '0';
+  process.env.MOCK_EMPTY_REPAIR_FIRST = '0';
+  await cleanupSession(id3);
 
   // A genuinely new/different game must get its own fresh, isolated session --
   // never reuse or reset the current one in place -- so nothing mixes with the
@@ -232,15 +312,15 @@ async function main() {
   // same game, still on disk.
   const afterOldSession = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
   assert.deepEqual(afterOldSession, beforeSwitchSession, 'the old session must not be modified by starting a new game');
-  assert.ok(fs.existsSync(path.join(__dirname, '..', 'projects', id, 'v2', 'frontend', 'index.html')), 'old game files must still exist');
+  assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), 'old game files must still exist');
 
   // The new session must start clean: only this exchange, no game, no files.
   const newSession = await (await fetch(`http://127.0.0.1:${port}/api/session/${newId}`)).json();
   assert.equal(newSession.messages.length, 2, 'new session should contain only the message that started it');
   assert.equal(newSession.hasGame, false);
   assert.equal(newSession.gameUrl, null);
-  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'projects', newId, 'v1')), 'new session must have no generated files');
-  fs.rmSync(path.join(__dirname, '..', 'projects', newId), { recursive: true, force: true });
+  assert.ok(!(await dbFileExists(newId, 1, 'frontend/index.html')), 'new session must have no generated files');
+  await cleanupSession(newId);
 
   // Session restore and validation.
   const session = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
@@ -250,9 +330,9 @@ async function main() {
   assert.equal((await fetch(`http://127.0.0.1:${port}/..%2fserver.js`)).status, 403);
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
 
-  fs.rmSync(path.join(__dirname, '..', 'projects', id), { recursive: true, force: true });
+  await cleanupSession(id);
 
-  // ---- Provider fallback: MELDCX primary, GROK as automatic backup ----
+  // ---- Provider fallback: MELDCX primary, SCX as automatic backup ----
   // A second mock that always errors, standing in for "MELDCX is down".
   const failMock = http.createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'application/json' });
@@ -262,38 +342,39 @@ async function main() {
   const failUrl = `http://127.0.0.1:${failMock.address().port}`;
   const workingUrl = `http://127.0.0.1:${mock.address().port}`;
 
-  // MELDCX unreachable -> GROK (pointed at the working mock) must answer instead.
+  // MELDCX unreachable -> SCX (pointed at the working mock) must answer instead.
   process.env.MELDCX_BASE_URL = failUrl;
-  process.env.GROK_API_KEY = 'grok-test-key';
-  process.env.GROK_URL = workingUrl;
-  process.env.GROK_MODEL = 'grok-test-model';
+  process.env.SCX_API_KEY = 'scx-test-key';
+  process.env.SCX_BASE_URL = workingUrl;
+  process.env.SCX_MODEL = 'scx-test-model';
   const idFallback = `test-fallback-${Date.now()}`;
   evts = await chat(port, idFallback, 'route:chat hello');
-  assert.equal(text(evts), 'Hi there!', 'a real answer must come through via the GROK fallback');
+  assert.equal(text(evts), 'Hi there!', 'a real answer must come through via the SCX fallback');
   assert.ok(!evts.some((e) => e.type === 'error'), 'a successful fallback must not surface as an error');
-  fs.rmSync(path.join(__dirname, '..', 'projects', idFallback), { recursive: true, force: true });
+  await cleanupSession(idFallback);
 
   // MELDCX key missing entirely (not just unreachable) -> same fallback applies.
   delete process.env.MELDCX_API_KEY;
   const idNoKey = `test-nokey-${Date.now()}`;
   evts = await chat(port, idNoKey, 'route:chat hello');
-  assert.equal(text(evts), 'Hi there!', 'a missing MELDCX key should also fall back to GROK');
-  fs.rmSync(path.join(__dirname, '..', 'projects', idNoKey), { recursive: true, force: true });
+  assert.equal(text(evts), 'Hi there!', 'a missing MELDCX key should also fall back to SCX');
+  await cleanupSession(idNoKey);
 
   // Both providers down -> the existing error path, never a fabricated reply.
   process.env.MELDCX_API_KEY = 'test-key';
-  process.env.GROK_URL = failUrl;
+  process.env.SCX_BASE_URL = failUrl;
   const idBothDown = `test-bothdown-${Date.now()}`;
   evts = await chat(port, idBothDown, 'route:chat hello');
   assert.ok(evts.some((e) => e.type === 'error'), 'both providers down must surface the existing error handling');
   assert.equal(text(evts), '', 'no fabricated text when both providers fail');
-  fs.rmSync(path.join(__dirname, '..', 'projects', idBothDown), { recursive: true, force: true });
+  await cleanupSession(idBothDown);
 
-  delete process.env.GROK_API_KEY;
-  delete process.env.GROK_URL;
-  delete process.env.GROK_MODEL;
+  delete process.env.SCX_API_KEY;
+  delete process.env.SCX_BASE_URL;
+  delete process.env.SCX_MODEL;
   process.env.MELDCX_BASE_URL = workingUrl;
   failMock.close();
+  await testDb.end();
 
   console.log('All tests passed.');
   process.exit(0);

@@ -17,12 +17,25 @@
 </head>
 <body>
   <div class="app" id="app">
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <nav class="sidebar" id="sidebar" aria-label="Chat history">
+      <div class="sidebar-head">
+        <button class="sidebar-new" id="newChat" type="button"><span aria-hidden="true">+</span> New chat</button>
+      </div>
+      <div class="sidebar-search">
+        <input type="search" id="chatSearch" placeholder="Search chats…" aria-label="Search chats">
+      </div>
+      <ul class="chat-list" id="chatList" aria-label="Previous chats"></ul>
+    </nav>
+
     <section class="chat" aria-label="Chat">
       <header class="chat-head">
-        <div class="brand"><span class="logo" aria-hidden="true">🎮</span><h1>Game Creator</h1></div>
+        <div class="chat-head-left">
+          <button class="ghost icon-btn" id="sidebarToggle" type="button" aria-label="Toggle chat history" aria-expanded="true">☰</button>
+          <div class="brand"><span class="logo" aria-hidden="true">🎮</span><h1>Game Creator</h1></div>
+        </div>
         <div class="head-actions">
-          <button class="ghost theme-toggle" id="themeToggle" type="button" aria-label="Switch to light theme">🌙</button>
-          <button class="ghost" id="newChat" type="button">New chat</button>
+          <button class="ghost icon-btn theme-toggle" id="themeToggle" type="button" aria-label="Switch to light theme">🌙</button>
         </div>
       </header>
 

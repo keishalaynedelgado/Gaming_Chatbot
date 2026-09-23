@@ -42,6 +42,7 @@
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --content-max: 880px;
   --gutter: clamp(16px, 4vw, 56px);
+  --sidebar-w: 280px;
 
   color-scheme: dark;
 }
@@ -91,7 +92,8 @@ body {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  body, .chat, .chat-head, .messages, .msg, .plan-card, .design-summary-card, .composer textarea, .banner {
+  body, .chat, .chat-head, .messages, .msg, .plan-card, .design-summary-card, .composer textarea, .banner,
+  .sidebar, .chat-item {
     transition: background-color 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
   }
 }
@@ -119,7 +121,7 @@ body {
 /* ==========================================================================
    Shell
    ========================================================================== */
-.app { display: flex; height: 100dvh; background: var(--bg); }
+.app { display: flex; height: 100dvh; background: var(--bg); position: relative; overflow: hidden; }
 .chat { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; background: var(--surface-1); }
 
 .chat-head {
@@ -128,18 +130,112 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--surface-1);
 }
-.brand { display: flex; align-items: center; gap: 10px; }
+.chat-head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand .logo {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; font-size: 17px; line-height: 1;
+  width: 32px; height: 32px; font-size: 17px; line-height: 1; flex: none;
   background: var(--accent-soft); border-radius: var(--radius-sm);
 }
-.brand h1 { font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; margin: 0; color: var(--text); }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.theme-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; padding: 0; font-size: 15px; line-height: 1;
+.brand h1 {
+  font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; margin: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.head-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; font-size: 15px; line-height: 1; flex: none;
+}
+
+/* ==========================================================================
+   Sidebar
+   A persistent chat list, ChatGPT-style: collapsible on desktop (width
+   animates to 0), an off-canvas drawer on mobile (see the responsive block
+   at the bottom of this file).
+   ========================================================================== */
+.sidebar {
+  width: var(--sidebar-w); flex: none; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--surface-1); border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar { transition: width 0.22s var(--ease), border-color 0.22s var(--ease); }
+}
+.sidebar.sidebar-collapsed { width: 0; border-right-color: transparent; }
+.sidebar-backdrop { display: none; }
+
+.sidebar-head { padding: 12px; flex: none; }
+.sidebar-new {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
+  padding: 10px 12px; font-weight: 600;
+}
+.sidebar-new:hover { background: var(--surface-3); border-color: var(--accent); }
+.sidebar-new span { font-size: 15px; line-height: 1; }
+
+.sidebar-search { padding: 0 12px 10px; flex: none; }
+.sidebar-search input {
+  width: 100%; font: inherit; font-size: 13px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 11px;
+}
+.sidebar-search input::placeholder { color: var(--text-tertiary); }
+.sidebar-search input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+
+.chat-list {
+  list-style: none; margin: 0; padding: 4px 8px 12px; flex: 1; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; min-width: var(--sidebar-w);
+}
+.chat-list::-webkit-scrollbar { width: 8px; }
+.chat-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-pill); }
+
+.chat-list-empty {
+  padding: 18px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; line-height: 1.5;
+}
+
+.chat-item {
+  position: relative; display: flex; align-items: stretch; gap: 2px;
+  border-radius: var(--radius-sm); margin-bottom: 2px;
+}
+.chat-item:hover { background: var(--surface-2); }
+.chat-item.active { background: var(--accent-soft); }
+.chat-item.active .chat-item-title { color: var(--accent); }
+
+.chat-item-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  background: none; border: 0; text-align: left; padding: 8px 8px 8px 10px;
+  font-weight: 500; border-radius: var(--radius-sm);
+}
+.chat-item-title {
+  color: var(--text); font-size: 13.5px; font-weight: 600; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-item-meta {
+  color: var(--text-tertiary); font-size: 11.5px; line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.chat-item-actions {
+  display: flex; align-items: center; gap: 2px; padding-right: 6px;
+  opacity: 0; pointer-events: none;
+}
+.chat-item:hover .chat-item-actions, .chat-item:focus-within .chat-item-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .chat-item-actions { opacity: 1; pointer-events: auto; } }
+.chat-item-action {
+  width: 26px; height: 26px; padding: 0; flex: none; align-self: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; color: var(--text-tertiary); font-size: 12px;
+}
+.chat-item-action:hover { background: var(--surface-3); color: var(--text); }
+.chat-item-action.danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+.chat-item-rename {
+  flex: 1; min-width: 0; margin: 6px 8px 6px 10px; font: inherit; font-size: 13.5px; font-weight: 600;
+  color: var(--text); background: var(--surface-1); border: 1px solid var(--accent); border-radius: 6px;
+  padding: 3px 7px;
+}
+.chat-item-rename:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 
 /* ==========================================================================
    Buttons & controls
@@ -351,6 +447,35 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 /* ==========================================================================
    Responsive
    ========================================================================== */
+
+/* Below this width the sidebar stops being a permanent column and becomes an
+   off-canvas drawer (matches chats.js's MOBILE_BREAKPOINT) -- opened by the
+   same toggle button that collapses it on desktop, closed by picking a chat,
+   tapping the backdrop, or toggling again. */
+@media (max-width: 860px) {
+  .sidebar {
+    position: absolute; inset: 0 auto 0 0; z-index: 20;
+    width: min(var(--sidebar-w), 82vw);
+    box-shadow: var(--shadow-md);
+    transform: translateX(0);
+  }
+  .sidebar.sidebar-collapsed { width: min(var(--sidebar-w), 82vw); border-right-color: var(--border); }
+  .sidebar.sidebar-hidden { transform: translateX(-100%); }
+  @media (prefers-reduced-motion: no-preference) {
+    .sidebar { transition: transform 0.22s var(--ease); }
+  }
+  .sidebar-backdrop {
+    display: block; position: absolute; inset: 0; z-index: 19;
+    background: rgba(6, 7, 11, 0.5); opacity: 0; pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .sidebar-backdrop { transition: opacity 0.22s var(--ease); }
+  }
+  /* Shown only while the sidebar is actually open as a drawer (not just
+     present -- .sidebar-hidden is what closes it at this width). */
+  .app:has(.sidebar:not(.sidebar-hidden)) .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+}
+
 @media (max-width: 640px) {
   .brand h1 { font-size: 14.5px; }
   .msg { max-width: 96%; font-size: 14px; }
