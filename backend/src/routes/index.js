@@ -19,6 +19,7 @@ async function router(req, res, url) {
   if (req.method === 'GET') {
     if (pathname === '/api/health') return healthController.getHealth(req, res);
     if (pathname === '/api/sessions') return sessionController.listSessions(req, res, url.searchParams.get('deleted') === '1');
+    if (pathname === '/api/saved-prompts') return sessionController.listSavedPrompts(req, res);
 
     let m = pathname.match(/^\/api\/session\/([^/]+)$/);
     if (m) return sessionController.getSession(req, res, m[1]);
@@ -43,6 +44,7 @@ async function router(req, res, url) {
   }
 
   if (req.method === 'POST') {
+    if (pathname === '/api/saved-prompts') return sessionController.createSavedPrompt(req, res);
     const m = pathname.match(/^\/api\/session\/([^/]+)\/restore$/);
     if (m) return sessionController.restoreSession(req, res, m[1]);
   }

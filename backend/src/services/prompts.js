@@ -148,13 +148,17 @@ function transcript(messages) {
     .join('\n\n');
 }
 
-function builderUser({ state, messages, userMessage, currentFiles, prototype, todayISO }) {
+function builderUser({ state, messages, userMessage, currentFiles, prototype, todayISO, fromSavedPrompt = false, promptType = null }) {
   const parts = [
     `## Mode\n${prototype ? 'ONE-FILE PROTOTYPE MODE -- output only frontend/index.html, fully self-contained.' : 'PROJECT STRUCTURE MODE (default) -- use the full folder structure from your instructions, omitting only what genuinely does not apply.'}`,
     `## Today's date\n${todayISO}`,
     `## Conversation so far (contains every design decision)\n${transcript(messages)}\n\nUSER: ${userMessage}`,
     `## Game Design Summary\n${state.summary || '(none)'}\nThe summary may end with a confirmation question, ignore that part. Where the conversation changed something after the summary, the conversation wins.`,
   ];
+  if (fromSavedPrompt) {
+    parts.push('## Saved prompt\nThis design comes from a saved, finalized prompt the user chose to build right away: there will be no questions or confirmation. Implement every mechanic, setting and specification exactly as written. Wherever something essential to a playable game is missing or vague (controls, win/lose rules, scoring, difficulty, visuals, audio), pick a sensible, conventional default for this kind of game and build it -- never stop to ask.');
+    if (promptType && promptType !== 'any') parts.push(`## Game type\nThe user filed this prompt as a ${promptType} game. Use it only to fill gaps the prompt leaves open; the prompt's own words always win.`);
+  }
   if (currentFiles && Object.keys(currentFiles).length) {
     parts.push(`## Current project files\n${qa.serializeFiles(currentFiles)}`);
     parts.push('## Task\nApply the change the user just requested. Output the notes, then ONLY the files you are adding or changing.');

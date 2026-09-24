@@ -16,26 +16,35 @@
 
 const POSE_URLS = Array.from({ length: 9 }, (_, i) => new URL(`./assets/vi/pose-${i + 1}.png`, import.meta.url).href);
 const DEFAULT_POSE = 0; // front-facing
-const STAGE_PAD = 12; // source px of headroom kept around the largest bird
+const STAGE_PAD = 4; // source px of headroom kept around the largest pose
+// The front pose's bird fills this share of the stage's height, whatever the
+// pose set -- so Vi stays the same on-screen size even when a set has wide
+// props (a racing wheel, spread wings) that would otherwise shrink the stage.
+const DEFAULT_BIRD_HEIGHT_SHARE = 0.917;
+const STAGE_ASPECT = 420 / 412; // width / height
 
 // Eyes per pose: [x0, y0, x1, y1] around each iris, in source pixels measured
 // from the top-left of the bird itself (not the image edge, so re-cropped or
 // re-padded images still line up), plus the face color around them. Eyelids
 // in that color close over the eyes to blink; the back views have no eyes.
+// Gamer set: controller, headset, handheld, Game Boy, joystick, racing wheel
+// (back view), VR headset, arcade stick, chips. No blink where no eyes show:
+// the back view, the VR headset and the eyes-shut chips pose.
 const EYES = [
-  { lid: 'rgb(154,176,200)', eyes: [[73, 105, 95, 144], [146, 103, 169, 144]] },
-  { lid: 'rgb(153,173,195)', eyes: [[123, 106, 149, 143], [192, 107, 202, 140]] },
-  { lid: 'rgb(154,177,200)', eyes: [[141, 101, 162, 139], [212, 100, 236, 141]] },
-  { lid: 'rgb(150,172,196)', eyes: [[44, 98, 56, 125], [102, 94, 127, 131]] },
+  { lid: 'rgb(137,160,193)', eyes: [[34, 44, 41, 55], [61, 42, 68, 55]] },
+  { lid: 'rgb(131,157,191)', eyes: [[46, 44, 55, 56]] },
+  { lid: 'rgb(139,164,197)', eyes: [[45, 46, 51, 56], [66, 44, 75, 57]] },
+  { lid: 'rgb(132,157,194)', eyes: [[26, 40, 33, 50], [52, 39, 59, 50]] },
+  { lid: 'rgb(131,157,194)', eyes: [[41, 39, 48, 50]] },
   { lid: null, eyes: [] },
   { lid: null, eyes: [] },
-  { lid: 'rgb(154,176,200)', eyes: [[73, 105, 95, 144], [146, 103, 169, 144]] },
-  { lid: 'rgb(167,190,210)', eyes: [[38, 97, 49, 130]] },
-  { lid: 'rgb(131,160,187)', eyes: [[105, 92, 121, 127], [161, 91, 184, 124]] },
+  { lid: 'rgb(152,174,205)', eyes: [[43, 41, 50, 49]] },
+  { lid: null, eyes: [] },
 ];
-const LID_PAD = 5; // px beyond the iris, so the lid also covers the white of the eye
+const LID_PAD = 2; // px beyond the iris, so the lid also covers the white of the eye
 
 const mascots = new Set();
+const byEl = new WeakMap(); // mascot element -> its state, for setMascotStatus()
 let pointer = null; // { x, y, at } in viewport px, or null when outside the window
 let rafId = 0;
 let lastFrame = 0;
@@ -95,8 +104,10 @@ function measure(im, src) {
 // with every position already expressed as a percentage of the shared stage.
 const posesReady = Promise.all(POSE_URLS.map((src) => loadImage(src).then((im) => measure(im, src))))
   .then((list) => {
-    const stageW = Math.max(...list.map((p) => p.bw)) + STAGE_PAD * 2;
-    const stageH = Math.max(...list.map((p) => p.bh)) + STAGE_PAD * 2;
+    // Sized from the front pose, then grown only if some pose wouldn't fit.
+    const refH = list[DEFAULT_POSE].bh / DEFAULT_BIRD_HEIGHT_SHARE;
+    const stageH = Math.max(refH, Math.max(...list.map((p) => p.bh)) + STAGE_PAD * 2);
+    const stageW = Math.max(refH * STAGE_ASPECT, Math.max(...list.map((p) => p.bw)) + STAGE_PAD * 2);
     const poses = list.map((p, i) => {
       const birdLeft = (stageW - p.bw) / 2; // centered
       const birdTop = stageH - STAGE_PAD - p.bh; // feet on the shared baseline
@@ -120,6 +131,7 @@ const posesReady = Promise.all(POSE_URLS.map((src) => loadImage(src).then((im) =
 // small companion docked at the chat input's bottom-right once a conversation
 // starts). Only the owl itself takes clicks; its box never blocks the UI.
 // tips: optional speech-bubble lines; each click on the owl moves to the next.
+// setMascotStatus() can temporarily replace the tip with a live status line.
 export function createMascot({ placement = 'corner', tips = [] } = {}) {
   const el = document.createElement('div');
   el.className = `mascot mascot--${placement}`;
@@ -133,12 +145,10 @@ export function createMascot({ placement = 'corner', tips = [] } = {}) {
       </button>
     </div></div>
     <div class="mascot-shadow" aria-hidden="true"></div>`;
-  if (tips.length) {
-    const bubble = document.createElement('div');
-    bubble.className = 'mascot-bubble';
-    bubble.textContent = tips[0];
-    el.prepend(bubble);
-  }
+  const bubble = document.createElement('div');
+  bubble.className = 'mascot-bubble';
+  bubble.textContent = tips[0] || '';
+  el.prepend(bubble);
 
   const m = {
     el,
@@ -155,7 +165,9 @@ export function createMascot({ placement = 'corner', tips = [] } = {}) {
     bubble: el.querySelector('.mascot-bubble'),
     tips,
     tip: 0,
+    status: '',
   };
+  byEl.set(el, m);
   el.querySelector('.mascot-hit').addEventListener('click', () => changePose(m));
   // The stage keeps a sensible shape while the poses are being measured, then
   // takes the measured one; the bird fades in once it can be placed properly.
@@ -242,13 +254,28 @@ function changePose(m) {
   }
   setTimeout(() => {
     showPose(m, next);
-    if (m.bubble) {
+    if (m.tips.length) {
       m.tip = (m.tip + 1) % m.tips.length;
-      m.bubble.textContent = m.tips[m.tip];
-      m.bubble.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'ease-out' });
+      if (!m.status) setBubble(m, m.tips[m.tip]); // a live status keeps the bubble until it clears
     }
   }, SWAP_MS * SWAP_AT);
   setTimeout(() => { m.swapping = false; }, SWAP_MS);
+}
+
+function setBubble(m, text) {
+  if (m.bubble.textContent === text) return;
+  m.bubble.textContent = text;
+  m.bubble.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'ease-out' });
+}
+
+// Shows a live status (e.g. "Understanding your request…") in the mascot's
+// speech bubble with a pulsing dot; an empty string goes back to the tips.
+export function setMascotStatus(el, text) {
+  const m = byEl.get(el);
+  if (!m) return;
+  m.status = text || '';
+  m.bubble.classList.toggle('is-busy', !!m.status);
+  setBubble(m, m.status || m.tips[m.tip] || '');
 }
 
 function updateTargets(m, now) {
