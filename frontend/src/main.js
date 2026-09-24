@@ -1,5 +1,6 @@
 'use strict';
 import { initSidebar } from './chats.js';
+import { createMascot } from './mascot.js';
 
 const AGENTS = {
   intent: 'Understanding your request',
@@ -66,9 +67,21 @@ function inline(t) {
 // Small markdown subset. Input is HTML-escaped first, so output is safe to inject.
 function renderMarkdown(src) {
   const out = [];
-  let list = null;
+  let list = null; // top-level list currently open: null | 'ol' | 'ul'
+  let liOpen = false; // an 'ol' item left open in case bullets nest under it
+  let nested = false; // a <ul> currently open inside that ol item, for sub-options
   let code = null;
+  // Closes the current top-level <ol> item (and any bullets nested under it) --
+  // called before starting the next item, or before leaving the list entirely.
+  const closeOlLi = () => {
+    if (list === 'ol' && liOpen) {
+      if (nested) { out.push('</ul>'); nested = false; }
+      out.push('</li>');
+      liOpen = false;
+    }
+  };
   const closeList = () => {
+    closeOlLi();
     if (list) { out.push(`</${list}>`); list = null; }
   };
   for (const line of escapeHtml(src).split('\n')) {
@@ -79,10 +92,26 @@ function renderMarkdown(src) {
     if (code !== null) { code.push(line); continue; }
     let m;
     if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length < 3 ? 3 : 4}>${inline(m[2])}</h${m[1].length < 3 ? 3 : 4}>`); }
-    else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
-    else if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
+      // A model reply commonly lists 2-4 bullet options right under a numbered
+      // question -- nest those inside that question's <li> instead of treating
+      // them as a sibling list, which would otherwise split the <ol> in two and
+      // restart its numbering at 1.
+      if (list === 'ol' && liOpen) {
+        if (!nested) { out.push('<ul>'); nested = true; }
+        out.push(`<li>${inline(m[1])}</li>`);
+      } else {
+        if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+        out.push(`<li>${inline(m[1])}</li>`);
+      }
+    }
+    else if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) {
+      if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } else { closeOlLi(); }
+      out.push(`<li>${inline(m[1])}`);
+      liOpen = true;
+    }
     else if (/^\s*---+\s*$/.test(line)) { closeList(); out.push('<hr>'); }
-    else if (!line.trim()) closeList();
+    else if (!line.trim()) { /* blank line: don't break a list -- models often write "loose" lists with a blank line between items */ }
     else { closeList(); out.push(`<p>${inline(line)}</p>`); }
   }
   if (code !== null) out.push(`<pre><code>${code.join('\n')}</code></pre>`);
@@ -156,7 +185,8 @@ function showWelcome() {
   els.messages.innerHTML = '';
   const box = document.createElement('div');
   box.className = 'welcome';
-  box.innerHTML = '<h2>What should we make?</h2><p>Chat about anything, or describe a game and I will design and build it with you, step by step.</p>';
+  box.innerHTML = '<div class="welcome-hero"><div class="welcome-bubble">Hi! I\'m Vi. Tell me a game idea and I\'ll help you design and build it.</div></div><h2>Where should we <span class="accent-word">start?</span></h2><p>Chat about anything, or describe a game and I will design and build it with you, step by step.</p>';
+  box.querySelector('.welcome-hero').prepend(createMascot({ placement: 'welcome' }));
   const chips = document.createElement('div');
   chips.className = 'chips';
   for (const text of ['I want to make a game', 'Surprise me with a game idea', 'What can you do?']) {
@@ -295,6 +325,8 @@ async function send(text) {
   let raw = '';
   let builtGameUrl = null;
   let plan = null;
+  let newTitle = null;
+  let newTitleAuto = null;
 
   const handle = (evt) => {
     if (evt.type === 'agent') {
@@ -327,6 +359,13 @@ async function send(text) {
       els.messages.innerHTML = '';
       addMessage('user', text);
       bubble = null;
+      newTitle = null; // a fresh session gets its own title event again below
+      newTitleAuto = null;
+    } else if (evt.type === 'title') {
+      // The database-authoritative title for a brand new chat -- see
+      // orchestrator.js. Never guessed client-side.
+      newTitle = evt.title;
+      newTitleAuto = evt.titleAuto;
     } else if (evt.type === 'error') {
       addMessage('error', evt.message);
     }
@@ -368,7 +407,7 @@ async function send(text) {
   } finally {
     controller = null;
     setBusy(false);
-    sidebar.recordActivity(sessionId, { messages, hasGame: Boolean(currentGameUrl), gameUrl: currentGameUrl });
+    sidebar.recordActivity(sessionId, { messages, hasGame: Boolean(currentGameUrl), gameUrl: currentGameUrl, title: newTitle, titleAuto: newTitleAuto });
   }
 }
 
@@ -396,7 +435,7 @@ async function loadChat(id) {
       // Don't auto-open a tab just from loading/reloading the chat; only offer the link.
       if (data.gameUrl) appendGameLink(data.gameUrl, lastAssistant);
     }
-    sidebar.refreshCache(id, { messages, hasGame: data.hasGame, gameUrl: data.gameUrl });
+    sidebar.refreshCache(id, { messages, hasGame: data.hasGame, gameUrl: data.gameUrl, title: data.title, titleAuto: data.titleAuto });
   } catch {
     messages = [];
     currentGameUrl = null;
@@ -442,9 +481,24 @@ els.input.addEventListener('keydown', (e) => {
 });
 els.stop.addEventListener('click', () => controller?.abort());
 els.themeToggle?.addEventListener('click', toggleTheme);
+// Vi's small corner companion, docked to the chat input; CSS keeps it hidden until the first message replaces the welcome screen.
+els.composer.appendChild(createMascot({
+  placement: 'corner',
+  tips: [
+    'Hoot hoot! Click a saved prompt in the sidebar to reuse it in one go.',
+    'Describe the goal, controls and vibe of your game — I\'ll handle the rest.',
+    'Want changes? Tell me what to tweak and I\'ll rebuild the game.',
+    'Like an idea? Type it here and save it to Saved prompts for later.',
+  ],
+}));
 
 applyTheme(currentTheme()); // sync the toggle button's icon/label to whatever index.html already applied
-const sidebar = initSidebar({ onSelect: loadChat, onNewDraft: startNewDraft });
+const sidebar = initSidebar({
+  onSelect: loadChat,
+  onNewDraft: startNewDraft,
+  getDraft: () => els.input.value,
+  onUsePrompt: (text) => { els.input.value = text; autoGrow(); els.input.focus(); },
+});
 checkHealth();
 const initialId = sidebar.getActiveId();
 if (initialId) loadChat(initialId);

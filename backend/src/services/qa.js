@@ -131,6 +131,65 @@ function topLevelDeclaredNames(src) {
   return names;
 }
 
+// Same import-clause parsing as bundler.js's parseImportClause (duplicated
+// rather than shared: qa.js is the more foundational module here, bundler.js
+// already depends on it, and this parsing is small enough that keeping them
+// independent is simpler than introducing a reverse dependency). Unlike
+// namesFromImportClause above, this keeps the EXPORTED name for an aliased
+// named import (`{ a as b }` -> imported "a", bound locally as "b") -- the
+// name that actually has to exist on the other side, which is what
+// checking an import against the target's real exports needs.
+function importBindings(clause) {
+  const result = { defaultName: null, namespaceName: null, named: [] };
+  let rest = clause.trim();
+  if (!rest.startsWith('{') && !rest.startsWith('*')) {
+    const m = rest.match(/^([A-Za-z_$][\w$]*)\s*(?:,\s*)?/);
+    if (m) {
+      result.defaultName = m[1];
+      rest = rest.slice(m[0].length).trim();
+    }
+  }
+  const nsMatch = rest.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)/);
+  if (nsMatch) {
+    result.namespaceName = nsMatch[1];
+    rest = rest.slice(nsMatch[0].length).trim();
+  }
+  const namedMatch = rest.match(/\{([^}]*)\}/);
+  if (namedMatch) {
+    for (const part of namedMatch[1].split(',')) {
+      const piece = part.trim();
+      if (!piece) continue;
+      const asMatch = piece.match(/^(\S+)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      result.named.push(asMatch ? { imported: asMatch[1], local: asMatch[2] } : { imported: piece, local: piece });
+    }
+  }
+  return result;
+}
+
+// Every name a file exports under (function/class/const/let/var declarations,
+// plus `export { a, b as c }` lists -- using the EXTERNAL name, "c", not the
+// local one, since that's what an importer actually asks for).
+function namedExports(src) {
+  const names = new Set();
+  const declRe = /^export\s+(?:async\s+function\*?|function\*?|class)\s+([A-Za-z_$][\w$]*)|^export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/gm;
+  let m;
+  while ((m = declRe.exec(src))) names.add(m[1] || m[2]);
+  const listRe = /^export\s*\{([^}]*)\}\s*;?\s*$/gm;
+  while ((m = listRe.exec(src))) {
+    for (const part of m[1].split(',')) {
+      const piece = part.trim();
+      if (!piece) continue;
+      const asMatch = piece.match(/^(\S+)\s+as\s+(\S+)$/);
+      names.add(asMatch ? asMatch[2] : piece);
+    }
+  }
+  return names;
+}
+
+function hasDefaultExport(src) {
+  return /^export\s+default\b/m.test(src);
+}
+
 // Deterministic checks over the whole project.
 // errors   -> the project cannot work, must go back to the Builder for repair
 // warnings -> passed along as hints for the QA agent (may be false alarms)
@@ -199,6 +258,32 @@ function staticCheck(files) {
         errors.push(`${filePath} imports "${spec}", a bare module specifier -- browsers can't resolve this without a bundler or import map. Use a relative path (e.g. "./game/x.js") or a full CDN URL instead.`);
       }
     }
+
+    // A local import resolving to a real FILE isn't enough -- the exact
+    // named/default binding has to actually be exported from it. This is
+    // the class of bug a "the file exists" check alone always misses (e.g.
+    // `import { App } from './App.js'` when App.js only has `export default
+    // class App`), and it breaks the whole file the same way a missing file
+    // does, just with a less obvious error message in a real browser.
+    const clauseRe = /^import\s+([^'";]+?)\s+from\s*['"]([^'"]+)['"]/gm;
+    let cm;
+    while ((cm = clauseRe.exec(files[filePath]))) {
+      const [, clause, spec] = cm;
+      if (!spec.startsWith('.')) continue; // can't introspect a CDN module's real exports
+      let target = resolveRelative(filePath, spec);
+      if (!/\.[a-zA-Z0-9]+$/.test(target)) target += '.js';
+      if (!files[target] || !/\.js$/i.test(target)) continue; // missing-file case already reported above
+      const bindings = importBindings(clause);
+      const targetExports = namedExports(files[target]);
+      if (bindings.defaultName && !hasDefaultExport(files[target])) {
+        errors.push(`${filePath} imports a default export from "${spec}" (resolved to ${target}), but ${target} has no "export default" -- this is a real error, the import will be undefined.`);
+      }
+      for (const { imported } of bindings.named) {
+        if (!targetExports.has(imported)) {
+          errors.push(`${filePath} imports "${imported}" from "${spec}" (resolved to ${target}), but ${target} does not export anything named "${imported}" -- this is a real error (ReferenceError/undefined), not a false alarm.`);
+        }
+      }
+    }
   }
 
   const allText = Object.values(files).join('\n');
@@ -207,8 +292,20 @@ function staticCheck(files) {
   if (!/restart|play again|try again/i.test(allText)) warnings.push('No restart option found.');
   if (/\beval\s*\(|\bfetch\s*\(|XMLHttpRequest/.test(allText)) warnings.push('Uses eval or network requests, which are blocked or forbidden.');
   if (/\bTODO\b|FIXME|\bnot implemented\b|\bcoming soon\b/i.test(allText)) warnings.push('Contains TODO/FIXME or other unfinished-work markers.');
+  if (/console\.(log|debug)\s*\(/.test(allText)) warnings.push('Contains console.log/debug calls; remove debugging output from the final build.');
 
   return { errors, warnings };
 }
 
-module.exports = { isSafePath, extractTag, extractFiles, serializeFiles, staticCheck, resolveRelative, namesFromImportClause };
+module.exports = {
+  isSafePath,
+  extractTag,
+  extractFiles,
+  serializeFiles,
+  staticCheck,
+  resolveRelative,
+  namesFromImportClause,
+  importBindings,
+  namedExports,
+  hasDefaultExport,
+};

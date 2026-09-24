@@ -10,7 +10,7 @@ const { PORT } = require('./config/constants');
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    await router(req, res, url.pathname);
+    await router(req, res, url);
   } catch (err) {
     console.error(err);
     if (!res.headersSent) json(res, err.status || 500, { error: err.message || 'Server error' });

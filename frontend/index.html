@@ -6,6 +6,10 @@
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#0c0e13">
   <title>Game Creator Chatbot</title>
+  <link rel="icon" type="image/png" href="./src/assets/vi/pose-1.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./src/styles/main.css">
   <script>
     // Applied synchronously, before first paint, so a saved light-theme choice
@@ -19,20 +23,34 @@
   <div class="app" id="app">
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
     <nav class="sidebar" id="sidebar" aria-label="Chat history">
+      <div class="sidebar-brand">
+        <img class="logo" src="./src/assets/vi/pose-1.png" alt="" aria-hidden="true">
+        <h1>Game Creator</h1>
+      </div>
       <div class="sidebar-head">
-        <button class="sidebar-new" id="newChat" type="button"><span aria-hidden="true">+</span> New chat</button>
+        <button class="sidebar-new" id="newChat" type="button">
+          <span class="sidebar-new-main"><span class="sidebar-new-icon" aria-hidden="true">+</span>New chat</span>
+          <span class="sidebar-new-shortcut" aria-hidden="true">⌥N</span>
+        </button>
       </div>
       <div class="sidebar-search">
         <input type="search" id="chatSearch" placeholder="Search chats…" aria-label="Search chats">
       </div>
+      <div class="sidebar-tabs" id="sidebarTabs" role="tablist" aria-label="Sidebar view">
+        <button class="sidebar-tab" id="tabChats" type="button" role="tab" aria-selected="true" aria-controls="chatList">Chats <span class="sidebar-tab-count" id="chatCount">0</span></button>
+        <button class="sidebar-tab" id="tabPrompts" type="button" role="tab" aria-selected="false" aria-controls="chatList">Saved prompts <span class="sidebar-tab-count" id="promptCount">0</span></button>
+      </div>
+      <div class="sidebar-error" id="sidebarError" role="alert" hidden></div>
       <ul class="chat-list" id="chatList" aria-label="Previous chats"></ul>
+      <div class="sidebar-foot">
+        <button class="sidebar-trash-toggle" id="chatTrashToggle" type="button" aria-pressed="false">🗑 Recently deleted</button>
+      </div>
     </nav>
 
     <section class="chat" aria-label="Chat">
       <header class="chat-head">
         <div class="chat-head-left">
           <button class="ghost icon-btn" id="sidebarToggle" type="button" aria-label="Toggle chat history" aria-expanded="true">☰</button>
-          <div class="brand"><span class="logo" aria-hidden="true">🎮</span><h1>Game Creator</h1></div>
         </div>
         <div class="head-actions">
           <button class="ghost icon-btn theme-toggle" id="themeToggle" type="button" aria-label="Switch to light theme">🌙</button>
@@ -46,7 +64,10 @@
       <div class="status" id="status" hidden></div>
 
       <form class="composer" id="composer" autocomplete="off">
-        <textarea id="input" rows="1" maxlength="4000" placeholder="Describe a game idea, or just chat…" aria-label="Message"></textarea>
+        <div class="composer-main">
+          <textarea id="input" rows="1" maxlength="4000" placeholder="Describe a game idea, or just chat…" aria-label="Message"></textarea>
+          <div class="composer-hint" aria-hidden="true">Enter send · Shift+Enter new line</div>
+        </div>
         <button type="submit" id="send">Send</button>
         <button type="button" id="stop" class="ghost" hidden>Stop</button>
       </form>
