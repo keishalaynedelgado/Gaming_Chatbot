@@ -4,10 +4,38 @@ const claude = require('./llm');
 const prompts = require('./prompts');
 const qa = require('./qa');
 const store = require('./store');
-const { milestoneScanner } = require('./plan');
 
 const ROUTES = ['chat', 'discover', 'plan', 'build', 'improve', 'new_game'];
 const busy = new Set();
+// A chat kept alive indefinitely (the sidebar makes that easy -- a user can
+// return to and keep extending the same conversation far longer than a
+// single sitting used to) would otherwise send its ENTIRE history to the
+// model on every single turn, unbounded. That's slower and more expensive
+// every turn, and on some local/reasoning models measurably so. Recent
+// context is what actually matters for "what are we discussing right now";
+// older turns already shaped state.summary, which is sent in full regardless.
+const HISTORY_LIMIT = 24;
+
+// Recent history for a conversational turn -- never reaches back past
+// state.historyStart (an earlier, unrelated game), and never past
+// HISTORY_LIMIT messages even within the same game's conversation.
+function recentHistory(state) {
+  return state.messages.slice(state.historyStart).slice(-HISTORY_LIMIT);
+}
+
+// The sidebar's auto-generated title, computed here (not just client-side)
+// so the database has a real title for a chat from the moment it exists --
+// mirrors frontend/src/chats.js's own autoTitle() so the two normally agree
+// outright; the database copy is the authoritative one.
+const TITLE_MAX = 48;
+function autoTitle(message) {
+  const flat = (message || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return 'New chat';
+  if (flat.length <= TITLE_MAX) return flat;
+  const cut = flat.slice(0, TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${lastSpace > 20 ? cut.slice(0, lastSpace) : cut}…`;
+}
 
 // ---------------------------------------------------------------- Intent Agent
 async function detectIntent(state, message, signal) {
@@ -29,6 +57,7 @@ async function detectIntent(state, message, signal) {
       messages: [{ role: 'user', content: input }],
       maxTokens: 60,
       signal,
+      timeoutMs: 30000,
     });
     const route = text.match(/"route"\s*:\s*"([a-z_]+)"/)?.[1];
     if (ROUTES.includes(route)) return route;
@@ -50,7 +79,7 @@ function guardRoute(route, state) {
 }
 
 // ------------------------------------------------- Designer / Planner / Chatbot
-// discover/plan show a Planning feed in the chat (see lib/plan.js and public/app.js);
+// discover/plan show a Planning feed in the chat (see frontend/src/main.js);
 // plain chat does not, since it isn't "designing or building a game".
 async function converse(kind, state, message, emit, signal, opts = {}) {
   const agent = { discover: 'designer', plan: 'planner', chat: 'chat' }[kind];
@@ -67,8 +96,9 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
     const { text } = await claude.stream({
       model: claude.MODELS.designer(),
       system: prompts.conversationSystem(kind, state, opts),
-      messages: [...state.messages.slice(state.historyStart), { role: 'user', content: message }],
+      messages: [...recentHistory(state), { role: 'user', content: message }],
       maxTokens: 2500,
+      timeoutMs: 90000,
       onText: (delta) => {
         emit({ type: 'text', delta });
         // The moment the summary heading appears, the planner has moved from
@@ -100,28 +130,46 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
 }
 
 // -------------------------------------------------------------- Game Builder
-async function runBuilder({ user, emit, signal, scan }) {
+async function runBuilder({ user, emit, signal, skipMeldcx }) {
   let written = 0;
   let lastReport = 0;
-  const { text, stopReason } = await claude.stream({
-    model: claude.MODELS.builder(),
-    system: prompts.BUILDER,
-    messages: [{ role: 'user', content: user }],
-    maxTokens: 50000,
-    signal,
-    onText: (delta) => {
-      written += delta.length;
-      if (written - lastReport >= 2000) {
-        lastReport = written;
-        emit({ type: 'agent', agent: 'builder', status: 'progress', detail: `${Math.round(written / 1000)}k characters written` });
-      }
-      scan?.(delta);
-    },
-  });
-  // A large project can still exceed even a generous token budget. Rather than
-  // fail outright, report it as truncated -- the caller re-prompts the Builder
-  // to continue from exactly what it already finished (see buildGame below).
-  const truncated = stopReason === 'max_tokens';
+  let text;
+  let stopReason;
+  let meldcxFailed = false;
+  try {
+    ({ text, stopReason } = await claude.stream({
+      model: claude.MODELS.builder(),
+      system: prompts.BUILDER,
+      messages: [{ role: 'user', content: user }],
+      maxTokens: 50000,
+      signal,
+      timeoutMs: 900000,
+      skipMeldcx,
+      onText: (delta) => {
+        written += delta.length;
+        if (written - lastReport >= 2000) {
+          lastReport = written;
+          emit({ type: 'agent', agent: 'builder', status: 'progress', detail: `${Math.round(written / 1000)}k characters written` });
+        }
+      },
+    }));
+  } catch (err) {
+    // The provider handling this died mid-generation but managed to write
+    // something first (see llm.js's attemptStream) -- rather than surface
+    // that as a failure the user has to manually retry, treat it exactly
+    // like running out of tokens: keep what was written and let the existing
+    // continuation loop below finish the job, on the fallback provider.
+    if (signal?.aborted || !err.partialText) throw err;
+    console.warn(`[orchestrator] builder stream failed mid-generation (${err.message}); continuing on the fallback provider`);
+    text = err.partialText;
+    stopReason = 'provider_failure';
+    meldcxFailed = !skipMeldcx;
+  }
+  // A large project can still exceed even a generous token budget -- and a
+  // provider can die mid-generation (see above). Rather than fail outright,
+  // report it as truncated -- the caller re-prompts the Builder to continue
+  // from exactly what it already finished (see buildGame below).
+  const truncated = stopReason === 'max_tokens' || stopReason === 'provider_failure';
   const { files, skipped, complete, lastPath } = qa.extractFiles(text);
   if (skipped.length) console.warn(`Builder returned unsafe file paths, dropped: ${skipped.join(', ')}`);
   if (truncated && !complete && lastPath) {
@@ -133,7 +181,7 @@ async function runBuilder({ user, emit, signal, scan }) {
     console.warn(`Builder returned zero usable files. Raw response (first 1500 chars):\n${text.slice(0, 1500)}`);
     throw new Error('The Game Builder did not return any files. Please try again.');
   }
-  return { notes: qa.extractTag(text, 'notes'), files, truncated };
+  return { notes: qa.extractTag(text, 'notes'), files, truncated, meldcxFailed };
 }
 
 // The Game Design Summary is known exactly server-side, so docs/GAME_DESIGN.md is
@@ -155,26 +203,32 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
     // an improve request never collapses an existing project back to one file.
     const prototype = mode === 'build' && prompts.wantsPrototype(message);
 
+    // A short, fixed micro-plan -- these labels (plus "Fixing problems..."/
+    // "Testing..." below, only when actually needed) are the whole Planning
+    // feed. Deliberately NOT a per-keyword-detected list scanned out of the
+    // code as it streams (that produced anywhere up to 9 granular steps) --
+    // a handful of fixed, honest phases, matching what's actually happening.
     emit({ type: 'plan', op: 'step', label: mode === 'improve' ? 'Reviewing your requested changes.' : 'Reviewing the design summary.' });
 
-    // Turns the code as it's written into short milestones ("Wiring up the
-    // controls.", "Connecting the score system.", ...) for the Planning feed.
-    // Shared across the initial write and any repair passes below.
-    const scan = milestoneScanner((label) => emit({ type: 'plan', op: 'step', label }));
-
     emit({ type: 'agent', agent: 'builder', status: 'start' });
-    emit({ type: 'plan', op: 'step', label: prototype ? 'Writing the prototype.' : 'Writing the project files.' });
-    let { notes, files: newFiles, truncated } = await runBuilder({
+    emit({ type: 'plan', op: 'step', label: prototype ? 'Writing the prototype.' : 'Writing the game in one pass.' });
+    // Once meldCX fails once during this build, every later round (continue
+    // or repair) skips straight to SCX instead of waiting out meldCX's full
+    // timeout again -- there's no reason to think it recovered mid-build.
+    let skipMeldcx = false;
+    let { notes, files: newFiles, truncated, meldcxFailed } = await runBuilder({
       user: prompts.builderUser({ state, messages: history, userMessage: message, currentFiles, prototype, todayISO }),
       emit,
       signal,
-      scan,
+      skipMeldcx,
     });
+    if (meldcxFailed) skipMeldcx = true;
     let project = { ...currentFiles, ...newFiles };
 
-    // A full project can be more than fits in one completion. Rather than give
-    // up, ask the Builder to continue from exactly what it already finished --
-    // up to a couple of rounds -- before treating it as a real failure.
+    // A full project can be more than fits in one completion, or the
+    // provider handling it can die mid-generation. Rather than give up, ask
+    // the Builder to continue from exactly what it already finished -- up to
+    // a couple of rounds -- before treating it as a real failure.
     for (let round = 0; truncated && round < 2; round += 1) {
       emit({ type: 'plan', op: 'step', label: 'Continuing (the project is large).' });
       try {
@@ -182,11 +236,12 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
           user: prompts.builderContinueUser({ state, currentFiles: project }),
           emit,
           signal,
-          scan,
+          skipMeldcx,
         });
         project = { ...project, ...cont.files };
         notes = cont.notes || notes;
         truncated = cont.truncated;
+        if (cont.meldcxFailed) skipMeldcx = true;
       } catch (err) {
         // Same reasoning as the repair loop below: one bad continuation reply
         // must not abort the build outright -- let the loop retry, or fall
@@ -210,8 +265,9 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
           user: prompts.builderRepairUser({ state, currentFiles: project, errors: check.errors }),
           emit,
           signal,
-          scan,
+          skipMeldcx,
         });
+        if (fixed.meldcxFailed) skipMeldcx = true;
         project = { ...project, ...fixed.files };
         notes = fixed.notes || notes;
         check = qa.staticCheck(project);
@@ -230,9 +286,16 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
       throw new Error(`The generated project still had errors after repair attempts: ${check.errors[0]}`);
     }
 
-    // LLM QA review: may return a minimal patch (only the files it changed).
+    // LLM QA review: a second full model pass re-reading everything the
+    // Builder just wrote, on top of the Builder's own required self-check
+    // (see prompts.BUILDER) and the deterministic static check + repair loop
+    // above. Real value (a genuinely fresh set of eyes can catch what the
+    // Builder missed), but it roughly doubles wall-clock time for a build
+    // that already passed static checks -- so for speed, it's opt-in
+    // (QA_REVIEW=1) rather than on by default. Set it if you want the extra
+    // pass back; the repair loop above still runs regardless.
     let qaLine = 'Automated checks passed.';
-    if (process.env.QA_REVIEW !== '0') {
+    if (process.env.QA_REVIEW === '1') {
       emit({ type: 'agent', agent: 'qa', status: 'start' });
       emit({ type: 'plan', op: 'step', label: 'Testing the game for errors.' });
       try {
@@ -242,6 +305,7 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
           messages: [{ role: 'user', content: prompts.qaUser({ state, files: project, warnings: check.warnings }) }],
           maxTokens: 32000,
           signal,
+          timeoutMs: 240000,
         });
         const verdict = qa.extractTag(text, 'verdict');
         const report = qa.extractTag(text, 'report');
@@ -318,7 +382,16 @@ async function handleChat({ id, message, emit, signal }) {
       ? await buildGame({ id: activeId, state, message, mode: route, emit, signal })
       : await converse(route, state, message, emit, signal, { freshStart });
 
-    state.messages.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
+    const now = new Date().toISOString();
+    state.messages.push({ role: 'user', content: message, createdAt: now }, { role: 'assistant', content: reply, createdAt: now });
+    if (!state.title) {
+      state.title = autoTitle(message);
+      state.titleAuto = true;
+      // Tells the sidebar the real, database-backed title directly -- no
+      // client-side guessing needed, so it can never drift from what's
+      // actually stored.
+      emit({ type: 'title', title: state.title, titleAuto: true });
+    }
     await store.save(activeId, state);
   } finally {
     busy.delete(id);

@@ -7,12 +7,12 @@
    mode the first time around.
    ========================================================================== */
 :root {
-  --bg: #0c0e13;
-  --surface-1: #14161d;
-  --surface-2: #1a1d27;
-  --surface-3: #232734;
-  --border: #262a37;
-  --border-strong: #343a4a;
+  --bg: #0b0c14;
+  --surface-1: #12131d;
+  --surface-2: #1a1c2a;
+  --surface-3: #242637;
+  --border: #262a3d;
+  --border-strong: #363a52;
 
   --text: #e9eaf0;
   --text-secondary: #a4aabb;
@@ -29,6 +29,28 @@
   --danger: #f16d84;
   --danger-soft: rgba(241, 109, 132, 0.1);
   --success: #3ecf8e;
+  --gold: #d9a21f;
+
+  /* The sidebar is its own fixed dark chrome, identical in both of the app's
+     light/dark themes (matching the reference design, which never lightens
+     its sidebar) -- declared once here, not overridden per theme. Exact
+     values lifted from the reference app's own computed styles
+     (--side/--side-ink/--side-muted), with hover/active as translucent
+     white overlays (rather than a solid block) to match its soft hover
+     highlight. */
+  --sidebar-bg: #101828;
+  --sidebar-text: #e6e8f2;
+  --sidebar-text-secondary: #8d94ad;
+  --sidebar-text-tertiary: #6c7288;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+  --sidebar-chip-bg: rgba(90, 82, 200, 0.32);
+  --sidebar-input-bg: rgba(255, 255, 255, 0.045);
+  --sidebar-input-hover-bg: rgba(255, 255, 255, 0.07);
+  --sidebar-btn-bg: #19233c;
+  --sidebar-btn-hover-bg: #212c48;
+  --sidebar-btn-text: #ffffff;
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -48,31 +70,31 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #f4f5f8;
-  --surface-1: #ffffff;
-  --surface-2: #f7f8fb;
-  --surface-3: #eef0f6;
-  --border: #e1e4ec;
-  --border-strong: #cdd2e0;
+  --bg: #f6f6fb;
+  --surface-1: #f6f6fb;
+  --surface-2: #ffffff;
+  --surface-3: #f0f0f8;
+  --border: #e3e4ef;
+  --border-strong: #cfd1e3;
 
-  --text: #191b23;
-  --text-secondary: #5b6072;
+  --text: #1b1e33;
+  --text-secondary: #62667f;
   --text-tertiary: #888ea1;
 
-  --accent: #5a63e0;
-  --accent-hover: #6d75e8;
-  --accent-active: #4a52c9;
+  --accent: #5a52c8;
+  --accent-hover: #4a42b5;
+  --accent-active: #3d3696;
   --accent-text: #ffffff;
-  --accent-soft: rgba(90, 99, 224, 0.1);
-  --accent-soft-strong: rgba(90, 99, 224, 0.2);
+  --accent-soft: #ecebfb;
+  --accent-soft-strong: rgba(90, 82, 200, 0.22);
 
-  --user-bubble: #e4e6fb;
-  --danger: #d43757;
-  --danger-soft: rgba(212, 55, 87, 0.08);
-  --success: #1c9d67;
+  --user-bubble: #ecebfb;
+  --danger: #c2413b;
+  --danger-soft: rgba(194, 65, 59, 0.08);
+  --success: #1f8a5b;
 
-  --shadow-sm: 0 1px 2px rgba(20, 22, 40, 0.06);
-  --shadow-md: 0 8px 24px rgba(20, 22, 40, 0.1);
+  --shadow-sm: 0 1px 2px rgba(27, 30, 51, 0.05);
+  --shadow-md: 0 1px 2px rgba(27, 30, 51, 0.05), 0 10px 30px rgba(27, 30, 51, 0.08);
 
   color-scheme: light;
 }
@@ -86,7 +108,7 @@ html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  font: 15px/1.55 "Lato", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -126,25 +148,28 @@ body {
 
 .chat-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 14px var(--gutter);
-  border-bottom: 1px solid var(--border);
+  padding: 16px var(--gutter);
   background: var(--surface-1);
 }
 .chat-head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand .logo {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; font-size: 17px; line-height: 1; flex: none;
-  background: var(--accent-soft); border-radius: var(--radius-sm);
-}
-.brand h1 {
-  font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; margin: 0; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .head-actions { display: flex; gap: 8px; align-items: center; flex: none; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; padding: 0; font-size: 15px; line-height: 1; flex: none;
+  border-radius: var(--radius-pill);
+}
+
+/* Sidebar brand -- top of the sidebar, always paired with the chat list it owns. */
+.sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 16px 16px 4px; flex: none; }
+.sidebar-brand .logo {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; font-size: 18px; line-height: 1; flex: none;
+  background: var(--sidebar-chip-bg); border-radius: var(--radius-md);
+  object-fit: contain; padding: 2px; /* the whole bird, never cropped to its head */
+}
+.sidebar-brand h1 {
+  font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin: 0; color: var(--sidebar-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* ==========================================================================
@@ -156,7 +181,7 @@ body {
 .sidebar {
   width: var(--sidebar-w); flex: none; min-width: 0;
   display: flex; flex-direction: column;
-  background: var(--surface-1); border-right: 1px solid var(--border);
+  background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
   overflow: hidden;
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -165,56 +190,136 @@ body {
 .sidebar.sidebar-collapsed { width: 0; border-right-color: transparent; }
 .sidebar-backdrop { display: none; }
 
-.sidebar-head { padding: 12px; flex: none; }
+.sidebar-head { padding: 14px 16px 8px; flex: none; }
 .sidebar-new {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
-  background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
-  padding: 10px 12px; font-weight: 600;
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--sidebar-btn-bg); color: var(--sidebar-btn-text); border: 1px solid var(--sidebar-border);
+  padding: 12px 14px; font-weight: 700; border-radius: 12px;
+  transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
 }
-.sidebar-new:hover { background: var(--surface-3); border-color: var(--accent); }
-.sidebar-new span { font-size: 15px; line-height: 1; }
+.sidebar-new:hover { background: var(--sidebar-btn-hover-bg); border-color: rgba(255, 255, 255, 0.16); box-shadow: var(--shadow-sm); }
+.sidebar-new-main { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.sidebar-new-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 18px; height: 18px; border: 1.5px solid currentColor; border-radius: 5px;
+  font-size: 12px; line-height: 1; opacity: 0.85;
+}
+.sidebar-new-shortcut { font-size: 11px; font-weight: 600; color: var(--sidebar-text-tertiary); letter-spacing: 0.02em; }
 
-.sidebar-search { padding: 0 12px 10px; flex: none; }
-.sidebar-search input {
-  width: 100%; font: inherit; font-size: 13px; color: var(--text);
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 8px 11px;
+.sidebar-search { padding: 0 16px 10px; flex: none; position: relative; }
+.sidebar-search::before {
+  content: "🔍"; position: absolute; left: 28px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; opacity: 0.55; pointer-events: none;
 }
-.sidebar-search input::placeholder { color: var(--text-tertiary); }
-.sidebar-search input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.sidebar-search input {
+  width: 100%; font: inherit; font-size: 13px; color: var(--sidebar-text);
+  background: var(--sidebar-input-bg); border: 1px solid var(--sidebar-border); border-radius: 12px;
+  padding: 12px 11px 12px 34px;
+  transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.sidebar-search input::placeholder { color: var(--sidebar-text-tertiary); }
+.sidebar-search input:hover { background: var(--sidebar-input-hover-bg); border-color: rgba(255, 255, 255, 0.16); }
+.sidebar-search input:focus-visible {
+  outline: none; background: var(--sidebar-input-hover-bg); border-color: var(--accent); box-shadow: var(--shadow-focus);
+}
+
+/* Chats / Saved prompts segmented control: one dark navy track holding two
+   equal tabs; the active one lifts onto a slightly lighter navy pill. */
+.sidebar-tabs {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: none;
+  margin: 0 16px 8px; padding: 4px; min-width: calc(var(--sidebar-w) - 32px);
+  background: #0b1220; border: 1px solid var(--sidebar-border); border-radius: 12px;
+}
+.sidebar-tab {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 10px; min-width: 0; white-space: nowrap;
+  background: transparent; border: 0; border-radius: 9px;
+  color: var(--sidebar-text-secondary); font-size: 13px; font-weight: 600; letter-spacing: 0;
+  transition: background-color 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+/* Overrides the generic accent-filled button:hover/:active rules. */
+.sidebar-tab:hover { background: rgba(255, 255, 255, 0.04); color: var(--sidebar-text); }
+.sidebar-tab:active { background: rgba(255, 255, 255, 0.06); transform: none; }
+.sidebar-tab[aria-selected="true"], .sidebar-tab[aria-selected="true"]:hover {
+  background: #1d2947; color: #ffffff; font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.sidebar-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 9px; }
+.sidebar-tab-count {
+  font-size: 11.5px; font-weight: 600; color: var(--sidebar-text-tertiary);
+  font-variant-numeric: tabular-nums; transition: color 0.2s var(--ease);
+}
+.sidebar-tab[aria-selected="true"] .sidebar-tab-count { color: var(--sidebar-text-secondary); }
+
+.sidebar-save-prompt {
+  width: 100%; margin: 2px 0 8px; padding: 9px 12px; text-align: left;
+  background: transparent; border: 1px dashed var(--sidebar-border); border-radius: 10px;
+  color: var(--sidebar-text-secondary); font-size: 12.5px; font-weight: 600;
+}
+.sidebar-save-prompt:hover { background: var(--sidebar-hover); border-color: rgba(255, 255, 255, 0.16); color: var(--sidebar-text); }
+.sidebar-save-prompt:active { background: var(--sidebar-active); transform: none; }
+
+.sidebar-error {
+  margin: 0 12px 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--danger-soft); border: 1px solid var(--danger); color: var(--danger);
+  font-size: 12px; line-height: 1.45;
+}
 
 .chat-list {
-  list-style: none; margin: 0; padding: 4px 8px 12px; flex: 1; overflow-y: auto; overflow-x: hidden;
+  list-style: none; margin: 0; padding: 6px 12px 12px; flex: 1; overflow-y: auto; overflow-x: hidden;
   scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; min-width: var(--sidebar-w);
 }
 .chat-list::-webkit-scrollbar { width: 8px; }
 .chat-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-pill); }
 
 .chat-list-empty {
-  padding: 18px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; line-height: 1.5;
+  padding: 18px 12px; text-align: center; color: var(--sidebar-text-tertiary); font-size: 13px; line-height: 1.5;
 }
+
+.chat-group-header {
+  padding: 14px 10px 6px; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--sidebar-text-tertiary);
+}
+.chat-group-header:first-child { padding-top: 6px; }
 
 .chat-item {
   position: relative; display: flex; align-items: stretch; gap: 2px;
-  border-radius: var(--radius-sm); margin-bottom: 2px;
+  border-radius: 10px; margin-bottom: 3px; background: transparent;
 }
-.chat-item:hover { background: var(--surface-2); }
-.chat-item.active { background: var(--accent-soft); }
-.chat-item.active .chat-item-title { color: var(--accent); }
+.chat-item:hover { background: var(--sidebar-hover); }
+.chat-item.active { background: var(--sidebar-active); }
+/* A thin, soft accent bar on the selected item -- the one thing that still
+   marks it once hover ends, since hover and active now share the same
+   background treatment. */
+.chat-item.active::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-item-title, .chat-item-meta { transition: color 0.2s var(--ease); }
+}
 
 .chat-item-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
-  background: none; border: 0; text-align: left; padding: 8px 8px 8px 10px;
-  font-weight: 500; border-radius: var(--radius-sm);
+  background: none; border: 0; text-align: left; padding: 9px 8px 9px 12px;
+  font-weight: 500; border-radius: 10px;
 }
+/* .chat-item-main is a <button> -- without this it inherits the generic
+   button:hover/:active rules below (an accent-colored fill), which painted
+   over the parent .chat-item's own hover/active background. */
+.chat-item-main:hover, .chat-item-main:focus-visible, .chat-item-main:active { background: none; transform: none; }
+/* By default a chat blends into the sidebar (dimmer text, no background);
+   hovering or becoming the active chat brightens both up together. */
 .chat-item-title {
-  color: var(--text); font-size: 13.5px; font-weight: 600; line-height: 1.35;
+  color: var(--sidebar-text-secondary); font-size: 13.5px; font-weight: 600; line-height: 1.35;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.chat-item:hover .chat-item-title, .chat-item.active .chat-item-title { color: #ffffff; }
 .chat-item-meta {
-  color: var(--text-tertiary); font-size: 11.5px; line-height: 1.4;
+  color: var(--sidebar-text-tertiary); font-size: 11.5px; line-height: 1.4;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.chat-item:hover .chat-item-meta, .chat-item.active .chat-item-meta { color: var(--sidebar-text-secondary); }
 
 .chat-item-actions {
   display: flex; align-items: center; gap: 2px; padding-right: 6px;
@@ -225,17 +330,29 @@ body {
 .chat-item-action {
   width: 26px; height: 26px; padding: 0; flex: none; align-self: center;
   display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 1px solid transparent; color: var(--text-tertiary); font-size: 12px;
+  background: transparent; border: 1px solid transparent; color: var(--gold); font-size: 12px;
 }
-.chat-item-action:hover { background: var(--surface-3); color: var(--text); }
+.chat-item-action:hover { background: rgba(255, 255, 255, 0.1); }
 .chat-item-action.danger:hover { background: var(--danger-soft); color: var(--danger); }
+/* A pinned chat's pin icon stays visible (and accent-colored) even without
+   hover, so pinned state is visible at a glance -- unlike rename/delete,
+   which only ever show on hover/focus. */
+.chat-item-action.pin-btn.pinned { opacity: 1; pointer-events: auto; color: var(--accent); }
 
 .chat-item-rename {
   flex: 1; min-width: 0; margin: 6px 8px 6px 10px; font: inherit; font-size: 13.5px; font-weight: 600;
-  color: var(--text); background: var(--surface-1); border: 1px solid var(--accent); border-radius: 6px;
+  color: var(--sidebar-text); background: var(--sidebar-input-bg); border: 1px solid var(--accent); border-radius: 6px;
   padding: 3px 7px;
 }
 .chat-item-rename:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+.sidebar-foot { padding: 8px 12px; border-top: 1px solid var(--sidebar-border); flex: none; }
+.sidebar-trash-toggle {
+  width: 100%; background: none; border: 1px solid transparent; color: var(--sidebar-text-tertiary);
+  font-size: 12px; font-weight: 550; padding: 7px 8px; border-radius: var(--radius-sm); text-align: left;
+}
+.sidebar-trash-toggle:hover { background: var(--sidebar-hover); color: var(--sidebar-text-secondary); }
+.sidebar-trash-toggle[aria-pressed="true"] { color: var(--accent); }
 
 /* ==========================================================================
    Buttons & controls
@@ -398,10 +515,19 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 /* ==========================================================================
    Welcome screen
    ========================================================================== */
-.welcome { margin: auto; text-align: center; color: var(--text-secondary); max-width: 420px; }
-.welcome h2 { color: var(--text); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 8px; }
-.welcome p { margin: 0; line-height: 1.6; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+.welcome { margin: auto; text-align: center; color: var(--text-secondary); max-width: 480px; }
+/* The mascot is always dead-center above the heading; the speech bubble is
+   positioned off its right shoulder so it never pushes the mascot sideways. */
+.welcome-hero { position: relative; display: flex; justify-content: center; margin: 0 auto 6px; }
+.welcome-bubble {
+  position: absolute; left: calc(50% + 70px); top: 40px; width: max-content; max-width: 230px; padding: 12px 15px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 16px 16px 16px 5px;
+  box-shadow: var(--shadow-md); color: var(--text); font-size: 14px; line-height: 1.5; text-align: left;
+}
+.welcome h2 { color: var(--text); font-size: 38px; font-weight: 750; letter-spacing: -0.02em; margin: 0 0 12px; line-height: 1.15; }
+.welcome h2 .accent-word { color: var(--accent); }
+.welcome p { margin: 0; line-height: 1.6; font-size: 15px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
 .chips button {
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--radius-pill); font-weight: 550; padding: 9px 16px;
@@ -428,21 +554,38 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
    ========================================================================== */
 .composer {
   display: flex; gap: 10px; align-items: flex-end;
-  padding: 14px var(--gutter) 18px;
-  max-width: var(--content-max); width: 100%; margin: 0 auto;
+  padding: 12px 16px;
+  max-width: var(--content-max); width: calc(100% - 2 * var(--gutter)); margin: 0 auto 18px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
+.composer:focus-within { border-color: var(--accent); box-shadow: var(--shadow-focus); }
+.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer textarea {
   flex: 1; resize: none; max-height: 160px; font: inherit; font-size: 14.5px; color: var(--text);
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: 11px 14px; line-height: 1.5;
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), background-color 0.15s var(--ease);
+  background: none; border: 0;
+  padding: 11px 4px; line-height: 1.5;
 }
 .composer textarea::placeholder { color: var(--text-tertiary); }
-.composer textarea:hover { border-color: var(--border-strong); }
-.composer textarea:focus-visible {
-  outline: none; border-color: var(--accent); box-shadow: var(--shadow-focus); background: var(--surface-1);
+.composer textarea:focus-visible { outline: none; }
+.composer button { border-radius: var(--radius-pill); padding: 11px 20px; }
+
+/* The keyboard-hint caption and the always-on purple border + circular send
+   button are specific to this light-theme redesign -- dark theme keeps its
+   previously-approved look (neutral border until focus, pill "Send" button)
+   untouched, so the hint stays hidden and the button unchanged there. */
+.composer-hint { display: none; }
+:root[data-theme="light"] .composer-hint {
+  display: block; font-size: 11px; color: var(--text-tertiary);
+  text-align: right; padding: 0 4px 2px;
 }
-.composer button { border-radius: var(--radius-md); padding: 11px 20px; }
+:root[data-theme="light"] .composer { border-color: var(--accent); border-width: 1.5px; }
+:root[data-theme="light"] .composer button[type="submit"] {
+  width: 36px; height: 36px; flex: none; padding: 0; font-size: 0;
+  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+}
+:root[data-theme="light"] .composer button[type="submit"]::before { content: "↑"; font-size: 16px; line-height: 1; }
 
 /* ==========================================================================
    Responsive
@@ -477,13 +620,129 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 }
 
 @media (max-width: 640px) {
-  .brand h1 { font-size: 14.5px; }
+  .sidebar-brand h1 { font-size: 14.5px; }
   .msg { max-width: 96%; font-size: 14px; }
   .plan-card { max-width: 96%; }
-  .welcome h2 { font-size: 19px; }
-  .composer { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .welcome h2 { font-size: 26px; }
+  .welcome-bubble { left: calc(50% + 54px); top: 30px; max-width: calc(50% - 54px); padding: 9px 11px; font-size: 12.5px; }
+  .composer { margin-bottom: max(18px, env(safe-area-inset-bottom)); }
 }
 @media (max-width: 400px) {
   .head-actions button { padding: 7px 12px; font-size: 12.5px; }
   .composer button { padding: 10px 14px; }
+}
+
+/* ==========================================================================
+   Mascot (see mascot.js)
+   Idle motion lives here; mascot.js springs the cursor lean onto .mascot-lean
+   and plays the pose-swap bounce on .mascot-art's `transform`. Bob, sway and
+   breathing use the independent `translate` / `rotate` / `scale` properties,
+   so none of the layers ever overwrite each other.
+   ========================================================================== */
+/* --mascot-size is the bird's own box. The padding around it is headroom for
+   everything that moves it (bob, hop, lean, and the 1.1x pose bounce), so the
+   full bird -- antler-brows, spread wings, tail, feet -- always stays inside
+   the mascot's own layout box and is never clipped by a scrolling parent. */
+.mascot {
+  --mascot-size: 120px;
+  --mascot-pad-x: calc(var(--mascot-size) * 0.12);
+  --mascot-pad-top: calc(var(--mascot-size) * 0.2);
+  position: relative; flex: none; overflow: visible; pointer-events: none; user-select: none;
+  width: calc(var(--mascot-size) + 2 * var(--mascot-pad-x));
+  padding: var(--mascot-pad-top) var(--mascot-pad-x) 0;
+}
+.mascot-float, .mascot-lean { overflow: visible; }
+.mascot-float { will-change: translate, rotate; }
+.mascot-lean { transform-origin: 50% 94%; will-change: transform; }
+/* Only the owl itself is clickable, so its box never blocks the UI around it. */
+/* Scoped under .mascot so it outranks `.composer button`, which would otherwise
+   pad the corner mascot (it lives inside the composer) and shrink the bird. */
+.mascot .mascot-hit {
+  display: block; width: 100%; padding: 0; margin: 0; border: 0; border-radius: 40%; overflow: visible;
+  background: none; cursor: pointer; pointer-events: auto; -webkit-tap-highlight-color: transparent;
+}
+.mascot .mascot-hit:hover, .mascot .mascot-hit:active { background: none; transform: none; }
+.mascot .mascot-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -6px; }
+/* The stage: one shared box every pose is drawn into (mascot.js sets its exact
+   aspect ratio and each image's position once the poses are measured). It
+   stays empty rather than showing a mis-sized bird until then. */
+.mascot-art {
+  position: relative; display: block; aspect-ratio: 420 / 412; transform-origin: 50% 96%;
+  opacity: 0; transition: opacity 0.25s var(--ease);
+}
+.mascot.is-ready .mascot-art { opacity: 1; }
+.mascot-img {
+  position: absolute; display: block; max-width: none; height: auto; -webkit-user-drag: none;
+  filter: drop-shadow(0 10px 14px rgba(40, 30, 120, 0.25));
+}
+.mascot-lids { position: absolute; inset: 0; pointer-events: none; }
+.mascot-lid {
+  position: absolute; border-radius: 50%;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--lid) 82%, #3b3f8f), var(--lid));
+  box-shadow: inset 0 -1.5px 0 rgba(30, 32, 90, 0.55);
+  transform: scaleY(0); transform-origin: 50% 0; transition: transform 70ms ease-in;
+}
+.mascot.is-blinking .mascot-lid { transform: scaleY(1); }
+.mascot-shadow {
+  width: 44%; height: calc(var(--mascot-size) * 0.06); margin: -2px auto 0; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(20, 16, 60, 0.34), transparent);
+}
+:root[data-theme="light"] .mascot-shadow { background: radial-gradient(closest-side, rgba(60, 50, 140, 0.24), transparent); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .mascot-float { animation: mascot-bob 3.6s ease-in-out infinite, mascot-sway 7.2s ease-in-out infinite; }
+  .mascot-shadow { animation: mascot-shadow 3.6s ease-in-out infinite; }
+  .mascot-art { animation: mascot-breathe 4.2s ease-in-out infinite; }
+}
+@keyframes mascot-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -10px; } }
+@keyframes mascot-sway { 0%, 100% { rotate: -1.4deg; } 50% { rotate: 1.4deg; } }
+@keyframes mascot-shadow { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.8); opacity: 0.6; } }
+@keyframes mascot-breathe { 0%, 100% { scale: 1 1; } 50% { scale: 1.012 1.024; } }
+
+/* Placements */
+.mascot--welcome { --mascot-size: 154px; } /* bird ~139px tall, as in the Viana reference */
+
+/* The corner companion lives inside the composer, so it always tracks the
+   input's position and height. With room to spare it floats just off the
+   input's top-right corner, outside the message column, with its speech
+   bubble to its RIGHT -- in the empty gutter, so it never covers the
+   conversation. Without that room the owl tucks in above the input's right
+   end and the bubble is hidden (any spot for it would sit over messages).
+   Hidden until the first message replaces the welcome screen. */
+.chat { container: chat / inline-size; }
+.composer { position: relative; }
+.mascot--corner {
+  --mascot-size: 76px; position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 2;
+  transition: opacity 0.35s var(--ease), transform 0.35s var(--ease), visibility 0s;
+}
+.mascot--corner .mascot-shadow { display: none; }
+.chat:not(:has(.welcome)) .messages { padding-bottom: 132px; }
+.mascot-bubble {
+  display: none; position: absolute; left: calc(100% - var(--mascot-pad-x) + 4px); bottom: 52%;
+  width: max-content; max-width: 250px; padding: 11px 14px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: var(--shadow-md);
+  font-size: 13.5px; line-height: 1.45; text-align: left; pointer-events: none;
+}
+@container chat (min-width: 1200px) {
+  /* Beside the input, outside the message column -- nothing to keep clear. */
+  .mascot--corner { --mascot-size: 84px; right: auto; left: calc(100% + 16px); bottom: calc(100% + 8px); } /* bird ~76px tall, as in the reference */
+  .mascot--corner .mascot-shadow { display: block; }
+  .chat:not(:has(.welcome)) .messages { padding-bottom: 24px; }
+}
+@container chat (min-width: 1500px) {
+  /* Enough gutter for the bubble to the owl's right: it takes whatever width
+     is left between the owl and the edge of the chat area, up to 250px. */
+  .mascot-bubble { display: block; max-width: min(250px, calc((100cqw - var(--content-max)) / 2 - 150px)); }
+}
+.chat:has(.welcome) .mascot--corner {
+  opacity: 0; visibility: hidden; transform: translateY(12px) scale(0.85);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease), visibility 0s 0.2s;
+}
+
+@media (max-width: 640px) {
+  .mascot--welcome { --mascot-size: 132px; }
+  .mascot--corner { --mascot-size: 60px; }
+  .mascot-bubble { display: none; } /* no room beside the input on a phone */
+  .chat:not(:has(.welcome)) .messages { padding-bottom: 88px; }
 }

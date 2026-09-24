@@ -1,7 +1,11 @@
 'use strict';
-// End-to-end test against a mock OpenAI-compatible (MELDCX) API and a real
-// (dedicated, disposable) PostgreSQL test database -- no API key and no
-// filesystem project storage needed anymore; see backend/src/services/db.js.
+// End-to-end test against a mock OpenAI-compatible (MELDCX) API, a real
+// (dedicated, disposable) PostgreSQL test database for chat data, and real
+// disk I/O under projects/ for generated game files -- see
+// backend/src/services/db.js and store.js for why files live on disk, not
+// in the database.
+const fs = require('node:fs');
+const path = require('node:path');
 const http = require('node:http');
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
@@ -10,17 +14,22 @@ const { staticCheck, extractFiles, isSafePath } = require('../backend/src/servic
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgres://gamechatbot:gc_app_pw_2026@127.0.0.1:5432/gamechatbot_test';
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 const testDb = new Pool({ connectionString: TEST_DATABASE_URL });
+// A dedicated directory, separate from dev's own projects/ -- so test runs
+// (which freely create/delete sessions) can never collide with, or get
+// blanket-cleaned alongside, real generated games sitting in projects/.
+const PROJECTS_ROOT = path.join(__dirname, '..', 'projects_test');
+process.env.PROJECTS_DIR = PROJECTS_ROOT;
 
-async function dbFileExists(id, version, relPath) {
-  const { rows } = await testDb.query('SELECT 1 FROM game_files WHERE session_id = $1 AND version = $2 AND path = $3', [id, version, relPath]);
-  return rows.length > 0;
+function dbFileExists(id, version, relPath) {
+  return fs.existsSync(path.join(PROJECTS_ROOT, id, `v${version}`, relPath));
 }
 
-// The whole point of a session is that it can be deleted outright (cascades
-// to its messages and game_files via the FK) -- the equivalent of the old
-// fs.rmSync(projects/<id>, { recursive: true }) cleanup between test cases.
+// The whole point of a session is that it can be deleted outright: its
+// Postgres row (cascading to its messages) plus its on-disk game files --
+// game files are never in the database, so a session's cleanup needs both.
 async function cleanupSession(id) {
   await testDb.query('DELETE FROM sessions WHERE id = $1', [id]);
+  fs.rmSync(path.join(PROJECTS_ROOT, id), { recursive: true, force: true });
 }
 
 const GOOD_INDEX = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width"></head><body><canvas id="c"></canvas><script type="module" src="./src/main.js"></script></body></html>`;
@@ -35,6 +44,7 @@ const BAD_MAIN = GOOD_MAIN.replace('function restart() {}', 'function restart({}
 
 let builderCalls = 0;
 let repairCalls = 0;
+let qaCalls = 0;
 let qaMode = 'PASS';
 
 function filesBlock(map) {
@@ -103,6 +113,7 @@ const mock = http.createServer((req, res) => {
       return sse(res, `<notes>Built it. Arrow keys move.</notes>\n<files>\n${filesBlock(files)}\n</files>`);
     }
     if (system.startsWith('You are the QA Agent')) {
+      qaCalls += 1;
       if (qaMode === 'FIXED') {
         const files = { 'frontend/src/main.js': GOOD_MAIN.replace('let paused = false;', 'let paused = false; // fixed') };
         return sse(res, `<verdict>FIXED</verdict><report>- fixed restart</report><files>\n${filesBlock(files)}\n</files>`);
@@ -145,6 +156,45 @@ async function main() {
   const dupeDecl = { ...GOOD_FILES, 'frontend/src/main.js': `${GOOD_MAIN}\nfunction start() { return 1; }\n` };
   assert.ok(staticCheck(dupeDecl).errors.some((e) => e.includes('"start"') && e.includes('already been declared')), 'import name re-declared locally should error');
 
+  // A named import from a file that only has a DEFAULT export -- the exact
+  // real bug hit in production (App.js importing GameOverScene wrong) that
+  // "the file exists" alone can't catch: the file is real, the name isn't.
+  const namedFromDefaultOnly = {
+    ...GOOD_FILES,
+    'frontend/src/main.js': `import { start } from './game/loop.js';\nimport { App } from './app.js';\nstart();\n`,
+    'frontend/src/app.js': `export default class App {}\n`,
+  };
+  assert.ok(
+    staticCheck(namedFromDefaultOnly).errors.some((e) => e.includes('"App"') && e.includes('does not export anything named')),
+    'a named import from a default-only export should error',
+  );
+
+  // A default import from a file with no default export at all.
+  const defaultFromNamedOnly = {
+    ...GOOD_FILES,
+    'frontend/src/main.js': `import { start } from './game/loop.js';\nimport App from './app.js';\nstart();\n`,
+    'frontend/src/app.js': `export class App {}\n`,
+  };
+  assert.ok(
+    staticCheck(defaultFromNamedOnly).errors.some((e) => e.includes('no "export default"')),
+    'a default import from a file with no default export should error',
+  );
+
+  // The positive case must NOT false-positive: correct named/default/aliased/
+  // export-list imports across real, varied export styles must pass clean.
+  const correctImports = {
+    ...GOOD_FILES,
+    'frontend/src/main.js': [
+      "import { start } from './game/loop.js';",
+      "import App, { helper as h } from './app.js';",
+      "import { CONST } from './list-export.js';",
+      'start(); new App(); h(); void CONST;',
+    ].join('\n'),
+    'frontend/src/app.js': 'export default class App {}\nfunction helper() {}\nexport { helper };\n',
+    'frontend/src/list-export.js': 'const CONST = 1;\nexport { CONST };\n',
+  };
+  assert.deepEqual(staticCheck(correctImports).errors, [], 'correct named/default/aliased/export-list imports must never false-positive');
+
   const parsed = extractFiles(`<files>\n${filesBlock(GOOD_FILES)}\n</files>`);
   // extractFiles trims exactly one trailing newline per file (so round-tripping
   // through serialize+extract doesn't accumulate blank lines); compare modulo that.
@@ -175,10 +225,12 @@ async function main() {
   require('../backend/src/server');
   await new Promise((r) => setTimeout(r, 500)); // now includes a real db.migrate() round trip before listen()
 
-  // A dedicated, disposable database -- safe to wipe clean before every run
-  // rather than only relying on each test case's own cleanup, in case a
-  // previous run crashed mid-test and left rows behind.
+  // A dedicated, disposable database and a dedicated, disposable directory --
+  // safe to wipe clean before every run rather than only relying on each
+  // test case's own cleanup, in case a previous run crashed mid-test and
+  // left rows/files behind. Never touches dev's own projects/.
   await testDb.query('TRUNCATE sessions CASCADE');
+  fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
 
   const id = `test-${Date.now()}`;
   const text = (evts) => evts.filter((e) => e.type === 'text').map((e) => e.delta).join('');
@@ -197,9 +249,12 @@ async function main() {
   assert.ok(text(evts).includes('## Game Design Summary'));
 
   // First builder output has a syntax error, so it must be repaired (resending
-  // only the broken file), then QA passes and the docs are written server-side.
+  // only the broken file) via the deterministic static check, then the docs
+  // are written server-side. QA_REVIEW is unset here (the new default), so
+  // this also proves the extra LLM QA pass is genuinely skipped for speed.
   evts = await chat(port, id, 'route:build yes build it');
   assert.equal(builderCalls, 2, 'builder should be re-run once to repair the syntax error');
+  assert.equal(qaCalls, 0, 'the extra LLM QA pass must be skipped by default (one-pass generation, for speed)');
   const game = evts.find((e) => e.type === 'game');
   assert.ok(game && game.version === 1);
   assert.equal(game.url, `/games/${id}/index.html?v=1`);
@@ -249,13 +304,20 @@ async function main() {
 
   // Improve: builder returns only the ONE changed file; the rest of the tree
   // (index.html, main.js) must be carried over unchanged into the new version.
+  // QA_REVIEW=1 here specifically to exercise the opt-in extra LLM QA pass
+  // (and its patch-application path) -- off by default everywhere else in
+  // this suite, per the assertion above.
   builderCalls = 0;
+  qaCalls = 0;
   qaMode = 'FIXED';
   process.env.MOCK_BAD_FIRST = '0';
+  process.env.QA_REVIEW = '1';
   evts = await chat(port, id, 'route:improve make it faster');
+  process.env.QA_REVIEW = '';
   const game2 = evts.find((e) => e.type === 'game');
   assert.equal(game2.version, 2);
   assert.equal(builderCalls, 1, 'improve should not need a repair pass');
+  assert.equal(qaCalls, 1, 'QA_REVIEW=1 must actually run the extra LLM QA pass');
   assert.ok(text(evts).includes('fixed restart'));
   const carried = await fetch(`http://127.0.0.1:${port}/games/${id}/index.html?v=2`);
   assert.equal(await carried.text(), GOOD_INDEX, 'unchanged file must be carried over into the new version');
@@ -330,6 +392,89 @@ async function main() {
   assert.equal((await fetch(`http://127.0.0.1:${port}/..%2fserver.js`)).status, 403);
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
 
+  // ---- Sidebar list / rename / soft-delete / restore (Postgres-backed) ----
+  // The database is authoritative for the sidebar now (title, recency, a
+  // preview, trash), not only localStorage -- see store.js's title/
+  // deleted_at columns and listSessions/renameSession/softDeleteSession/
+  // restoreSession.
+  let listed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json()).sessions;
+  let entry = listed.find((s) => s.id === id);
+  assert.ok(entry, 'a session with real activity must appear in the sidebar list');
+  assert.equal(entry.title, 'route:chat hello', 'the title must be auto-generated from the very first message');
+  assert.equal(entry.titleAuto, true);
+  assert.ok(typeof entry.lastMessage === 'string' && entry.lastMessage.length > 0, 'lastMessage must reflect real conversation content');
+  assert.equal(entry.hasGame, true);
+  assert.equal(entry.gameUrl, `/games/${id}/index.html?v=2`, 'the listed gameUrl must reflect the current version');
+  assert.equal(listed.filter((s) => s.id === id).length, 1, 'a session must never appear twice in the list');
+
+  // Rename
+  const rename = (body) => fetch(`http://127.0.0.1:${port}/api/session/${id}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  assert.equal((await rename({ title: 'My Renamed Chat' })).status, 200);
+  entry = (await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json()).sessions.find((s) => s.id === id);
+  assert.equal(entry.title, 'My Renamed Chat');
+  assert.equal(entry.titleAuto, false, 'a manual rename must clear titleAuto');
+  assert.equal((await rename({ title: '   ' })).status, 400, 'an empty/whitespace-only title must be rejected');
+  assert.equal((await rename({ title: 'x'.repeat(500) })).status, 400, 'an excessively long title must be rejected');
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/test-missing-${Date.now()}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }),
+  })).status, 404, 'renaming a nonexistent session must 404');
+
+  // Soft delete: must disappear from the normal list, appear in the trash,
+  // and every message/game file must remain completely untouched.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/${id}`, { method: 'DELETE' })).status, 200);
+  listed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json()).sessions;
+  assert.ok(!listed.some((s) => s.id === id), 'a deleted chat must not appear in the normal sidebar list');
+  let trashed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions?deleted=1`)).json()).sessions;
+  entry = trashed.find((s) => s.id === id);
+  assert.ok(entry, 'a deleted chat must appear in the trash list');
+  assert.equal(entry.title, 'My Renamed Chat', 'the renamed title must survive a soft delete');
+  assert.ok(entry.deletedAt, 'deletedAt must be set once deleted');
+
+  // Soft delete must not block direct access (an already-open game tab must
+  // keep working) -- nothing was actually removed.
+  let fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
+  assert.equal(fetched.messages.length, 12, "a soft-deleted session's messages must be completely intact");
+  assert.equal(fetched.hasGame, true);
+  assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), "a soft-deleted session's game files must be completely intact");
+
+  // Wrong-state operations must 404, never silently no-op.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/${id}`, { method: 'DELETE' })).status, 404, 'deleting an already-deleted chat must 404');
+  assert.equal((await rename({ title: 'x' })).status, 404, 'renaming a deleted chat must 404 (restore it first)');
+  const idNeverDeleted = `test-never-deleted-${Date.now()}`;
+  await chat(port, idNeverDeleted, 'route:chat hello');
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/${idNeverDeleted}/restore`, { method: 'POST' })).status, 404, 'restoring a non-deleted chat must 404');
+  await cleanupSession(idNeverDeleted);
+
+  // Restore: must reappear in the normal list, disappear from the trash, and
+  // every original message/timestamp/game version must still be exactly there.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/${id}/restore`, { method: 'POST' })).status, 200);
+  listed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json()).sessions;
+  entry = listed.find((s) => s.id === id);
+  assert.ok(entry, 'a restored chat must reappear in the normal sidebar list');
+  assert.equal(entry.title, 'My Renamed Chat', 'the title must survive restore');
+  assert.equal(entry.deletedAt, null);
+  assert.equal(listed.filter((s) => s.id === id).length, 1, 'restore must never produce a duplicate entry');
+  trashed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions?deleted=1`)).json()).sessions;
+  assert.ok(!trashed.some((s) => s.id === id), 'a restored chat must disappear from the trash');
+  fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
+  assert.equal(fetched.messages.length, 12, 'restore must not lose any messages');
+  assert.equal(fetched.hasGame, true);
+  assert.equal(fetched.gameUrl, `/games/${id}/index.html?v=2`, 'restore must preserve the exact game version');
+  assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), 'restore must preserve the game files');
+  assert.ok(
+    fetched.messages.every((m) => m.createdAt && !Number.isNaN(Date.parse(m.createdAt))),
+    'every message must carry a valid createdAt timestamp',
+  );
+
+  // Invalid ids on every new route must 400, never throw/500.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/..%2f..%2fx`, { method: 'DELETE' })).status, 400);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/..%2f..%2fx/restore`, { method: 'POST' })).status, 400);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/..%2f..%2fx`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }),
+  })).status, 400);
+
   await cleanupSession(id);
 
   // ---- Provider fallback: MELDCX primary, SCX as automatic backup ----
@@ -352,6 +497,47 @@ async function main() {
   assert.equal(text(evts), 'Hi there!', 'a real answer must come through via the SCX fallback');
   assert.ok(!evts.some((e) => e.type === 'error'), 'a successful fallback must not surface as an error');
   await cleanupSession(idFallback);
+
+  // A provider that accepts the connection but then NEVER responds (the
+  // real-world "local model went silent/hung" case this whole timeout
+  // mechanism exists for) must be abandoned after timeoutMs and treated as a
+  // failure like any other -- including still falling back to SCX -- rather
+  // than hang forever. Exercises llm.stream() directly since orchestrator's
+  // own per-role timeouts are intentionally minutes-long.
+  const hangMock = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    // deliberately: no data written, connection never closed
+  });
+  await new Promise((r) => hangMock.listen(0, '127.0.0.1', r));
+  process.env.MELDCX_BASE_URL = `http://127.0.0.1:${hangMock.address().port}`;
+  const llm = require('../backend/src/services/llm');
+  // A successful fallback always replaces the thrown error, so the timeout's
+  // own message (not just the fallback outcome) is only observable via the
+  // console.warn logged right before falling back -- capture that instead.
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warnings.push(msg);
+  const hangStart = Date.now();
+  let hangResult;
+  try {
+    hangResult = await llm.stream({
+      model: 'whatever',
+      system: 'a system prompt not matching any special-cased mock route',
+      messages: [{ role: 'user', content: 'hi' }],
+      maxTokens: 100,
+      timeoutMs: 400,
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  const hangElapsed = Date.now() - hangStart;
+  assert.ok(hangElapsed < 5000, `a hung provider must be abandoned quickly (took ${hangElapsed}ms), not hang indefinitely`);
+  assert.equal(hangResult.text, 'Hi there!', 'a hung MELDCX must still fall back to a working SCX, exactly like any other MELDCX failure');
+  assert.ok(
+    warnings.some((w) => /did not respond within/.test(w)),
+    `the timeout must produce its own clear message, not a raw "operation was aborted" (got: ${warnings.join(' | ')})`,
+  );
+  hangMock.close();
 
   // MELDCX key missing entirely (not just unreachable) -> same fallback applies.
   delete process.env.MELDCX_API_KEY;

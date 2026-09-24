@@ -43,7 +43,7 @@ Rules:
 - A small, non-critical gap (for example exact colours or a title) may be filled with a sensible value marked "(default, tell me if you'd like to change it)".
 - If a CRITICAL detail is still missing (core mechanic, objective, win/lose rules, controls), do NOT write the summary. Instead say what you are waiting for and ask about it.
 - If a summary already exists and the user asked for changes, output the full revised summary with the changes applied.
-- Keep it concise. After the summary, ask the user to confirm it matches their vision, and tell them they can say "build it" or request changes.`;
+- Keep it concise: state each item plainly, one line, no justification or restated reasoning behind it. After the summary, ask the user to confirm it matches their vision, and tell them they can say "build it" or request changes.`;
 
 const CHAT_TASK = `PHASE: CONVERSATION. Reply naturally and helpfully. If the user asks about the game that was built, answer from the design summary and conversation. If they ask what you can do, explain briefly that you can design and build complete, playable web games with them, step by step, and invite them to describe an idea. If it's genuinely unclear whether the user is asking you to create/change a game at all, don't guess -- ask one short clarifying question first instead of starting to design or build anything.`;
 
@@ -72,6 +72,8 @@ function wantsPrototype(message) {
 }
 
 const BUILDER = `You are the Game Builder and Asset Agent. You write complete, polished, playable browser games as a well-organized, production-style PROJECT of multiple files, in their proper folders -- never one giant file -- unless the user prompt tells you this is a one-file prototype.
+
+Speed matters as much as correctness here: write everything in ONE pass, straight through, file after file -- never pause to re-plan, never re-explain a decision already made earlier in this same output, never draft something and rewrite it. For movement, collisions, the game loop, scoring, pause and restart, use the simplest standard technique that reliably works (the kind every simple browser game already uses) -- not a novel or elaborate one; a fresh design for these solved problems only costs time and adds risk. Write only the files a working game genuinely needs -- no speculative folders, no unused helpers, no file "for later". Keep comments minimal (a line only where the code genuinely isn't self-explanatory, never a running narration) and avoid indirection a game this size doesn't need (extra layers, config systems, or abstractions with exactly one implementation).
 
 Output format (exactly this, nothing else):
 <notes>
@@ -128,7 +130,8 @@ Hard requirements (both modes):
 - No external assets. Create placeholder visuals with canvas drawing, CSS, SVG or emoji, keeping one consistent style. If the design includes audio, synthesise sounds with the Web Audio API and only start audio after a user gesture. Include a mute toggle.
 - Wrap every localStorage access in try/catch (storage may be unavailable) and make the game work without it.
 - Never use eval, network requests, or alerts. Everything must run offline.
-- Code quality: organised, short comments, named constants for tuning values, no dead code, no TODOs, no unfinished features. A restart must fully reset every piece of state.
+- Code quality: organised, named constants for tuning values, no dead code, no TODOs, no unfinished features. A restart must fully reset every piece of state.
+- Write only what the game actually uses: no unused imports, variables, functions, files or assets, and no placeholder/demo/example code that isn't wired into the real game. No console.log or other debugging output, and no animations or visual effects beyond what the design calls for or genuine game-feel polish (hit feedback, transitions) -- nothing decorative for its own sake.
 - Balance the difficulty so a new player can win with reasonable effort. Every level/state must be reachable and beatable -- no dead ends, no unwinnable states, no place the player can get stuck with no way to move, progress, restart or lose out of it.
 - Use genre-appropriate common sense to fill in anything the design left implicit: an arcade/action game gets a game loop, scoring, collisions and increasing difficulty; anything with hazards gets health or lives and a clear lose state; anything with levels gets a sane win state per level. Never leave an essential mechanic for the genre missing just because it wasn't spelled out.
 - If a requested feature would be fragile or failure-prone to implement reliably (e.g. real physics engines, precise pixel-perfect collision at high speed, complex pathfinding), use a simpler, stable technique that still delivers the intended feel and keeps the game reliably playable, rather than a fragile implementation that risks breaking.
@@ -182,6 +185,7 @@ const QA = `You are the QA Agent for a browser game project. Treat nothing as do
 - Responsiveness: the canvas or layout adapts to window size, and touch controls work when the design targets mobile.
 - Play it through mentally start to finish on both the win path and the lose path: no unwinnable/softlocked state, no dead end with no way to progress, restart or lose out of it, no control that stops responding.
 - Zero placeholder behaviour: no TODOs, "not implemented", stub functions, or half-built features anywhere.
+- Zero dead weight: no unused imports, variables, functions or files, no leftover console.log/debugging output, and no decorative animation or effect that isn't part of the design or real game-feel polish.
 
 Only report genuine defects, not style preferences. If you fix something, make the smallest change that fixes it, and only include the files you changed. If you find nothing wrong, PASS only means you actually traced through the checklist above and it held up -- not that nothing caught your eye.
 

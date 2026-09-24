@@ -88,35 +88,70 @@ async function readSse(res, onData) {
 
 // One attempt against one provider. Never logs the API key. Throws on any
 // failure; stream() below decides whether that's worth falling back from.
-async function attemptStream(provider, { model, system, messages, maxTokens, onText, signal }) {
-  const base = provider.baseUrl.replace(/\/(chat\/completions)?\/?$/, '');
-  const res = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    signal,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.apiKey}` },
-    body: JSON.stringify({
-      model,
-      stream: true,
-      max_tokens: Math.min(maxTokens + REASONING_HEADROOM, MAX_COMPLETION),
-      messages: [{ role: 'system', content: system }, ...messages],
-    }),
-  });
+//
+// timeoutMs guards against exactly what nothing else here could catch: the
+// provider accepts the connection and then never sends a token (a hung local
+// model "thinking" forever, or a dead upstream that never closes the
+// socket). Without this, such a request waits forever -- the caller's own
+// signal only fires if the USER cancels, which they can't do if they don't
+// know it's stuck rather than just slow. This is a separate, internal signal
+// from the caller's: a timeout must still let stream() fall back to SCX
+// exactly like any other MELDCX failure, which only checks the CALLER's
+// signal to decide that -- see the `signal?.aborted` check below there.
+async function attemptStream(provider, { model, system, messages, maxTokens, onText, signal, timeoutMs }) {
+  const timeoutSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : null;
+  const combinedSignal = signal && timeoutSignal ? AbortSignal.any([signal, timeoutSignal]) : signal || timeoutSignal;
+
+  let res;
+  try {
+    res = await fetch(`${provider.baseUrl.replace(/\/(chat\/completions)?\/?$/, '')}/chat/completions`, {
+      method: 'POST',
+      signal: combinedSignal,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.apiKey}` },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        max_tokens: Math.min(maxTokens + REASONING_HEADROOM, MAX_COMPLETION),
+        messages: [{ role: 'system', content: system }, ...messages],
+      }),
+    });
+  } catch (err) {
+    // Node/undici raises a TimeoutError (not AbortError) specifically for an
+    // AbortSignal.timeout()-sourced abort -- checked for by name, not
+    // instanceof, since it's a DOMException, not our own class.
+    if ((err.name === 'AbortError' || err.name === 'TimeoutError') && !signal?.aborted) {
+      throw new Error(`${provider.name} did not respond within ${Math.round(timeoutMs / 1000)}s and was cancelled. Try again, or try a different/faster model.`);
+    }
+    throw err;
+  }
   if (!res.ok) await failFromResponse(res, provider.name);
 
   let text = '';
   let stopReason = null;
-  await readSse(res, (evt) => {
-    if (evt.error) throw new Error(`${provider.name} error: ${evt.error.message || 'stream failed'}`);
-    const choice = evt.choices?.[0];
-    if (!choice) return;
-    // delta.reasoning_content is the model's hidden thinking: never shown or stored.
-    const piece = choice.delta?.content;
-    if (piece) {
-      text += piece;
-      onText?.(piece);
-    }
-    if (choice.finish_reason) stopReason = choice.finish_reason === 'length' ? 'max_tokens' : choice.finish_reason;
-  });
+  try {
+    await readSse(res, (evt) => {
+      if (evt.error) throw new Error(`${provider.name} error: ${evt.error.message || 'stream failed'}`);
+      const choice = evt.choices?.[0];
+      if (!choice) return;
+      // delta.reasoning_content is the model's hidden thinking: never shown or stored.
+      const piece = choice.delta?.content;
+      if (piece) {
+        text += piece;
+        onText?.(piece);
+      }
+      if (choice.finish_reason) stopReason = choice.finish_reason === 'length' ? 'max_tokens' : choice.finish_reason;
+    });
+  } catch (err) {
+    // Whatever text streamed in before this provider died is attached to the
+    // error (never thrown away) -- a caller that knows how to resume a
+    // partial generation (see orchestrator.js's Builder continuation loop)
+    // can pick up from here instead of starting over from nothing.
+    const wrapped = (err.name === 'AbortError' || err.name === 'TimeoutError') && !signal?.aborted
+      ? new Error(`${provider.name} stopped responding mid-stream after ${Math.round(timeoutMs / 1000)}s and was cancelled.`)
+      : err;
+    wrapped.partialText = text;
+    throw wrapped;
+  }
 
   if (!text.trim()) {
     throw new Error(
@@ -134,29 +169,33 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
 // giving up. Resolves with the full text and the stop reason ("max_tokens"
 // when the output was cut off) -- identical shape regardless of which
 // provider actually answered.
-async function stream({ model, system, messages, maxTokens = 4096, onText, signal }) {
+async function stream({ model, system, messages, maxTokens = 4096, onText, signal, timeoutMs = 120000, skipMeldcx = false }) {
   const meldcx = meldcxConfig();
   const scx = scxConfig();
 
   // Fall back only before any content has reached the caller. Once a token
   // has streamed into the chat, switching providers mid-response would show
   // a corrupted, duplicated reply -- so a failure past that point is always
-  // just propagated, exactly as before this fallback existed.
+  // just propagated (with whatever partial text it managed -- see
+  // attemptStream's catch block -- attached for a caller that can resume a
+  // partial generation itself, such as the Builder's continuation loop),
+  // exactly as before this fallback existed. A timeout is just another
+  // failure by this point -- it falls back exactly the same way.
   let emitted = false;
   const guardedOnText = (piece) => {
     emitted = true;
     onText?.(piece);
   };
 
-  if (meldcx.apiKey) {
+  if (meldcx.apiKey && !skipMeldcx) {
     console.log(`[llm] provider=meldcx model=${model}`);
     try {
-      return await attemptStream(meldcx, { model, system, messages, maxTokens, onText: guardedOnText, signal });
+      return await attemptStream(meldcx, { model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs });
     } catch (err) {
       if (signal?.aborted || emitted) throw err;
       console.warn(`[llm] meldcx unavailable (${err.message}); falling back to provider=scx`);
     }
-  } else {
+  } else if (!skipMeldcx) {
     console.warn('[llm] MELDCX_API_KEY not set; falling back to provider=scx');
   }
 
@@ -167,7 +206,7 @@ async function stream({ model, system, messages, maxTokens = 4096, onText, signa
   }
   console.log(`[llm] provider=scx model=${scx.model}`);
   try {
-    return await attemptStream(scx, { model: scx.model, system, messages, maxTokens, onText: guardedOnText, signal });
+    return await attemptStream(scx, { model: scx.model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs });
   } catch (err) {
     if (!(signal?.aborted)) console.error(`[llm] scx fallback also failed (${err.message})`);
     throw err;
