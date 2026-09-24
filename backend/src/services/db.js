@@ -85,6 +85,24 @@ async function migrate() {
       UNIQUE (session_id, seq)
     );
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, seq);
+
+    -- Prompts the user wrote and saved themselves: finalized, build-ready game
+    -- specs (see store.listSavedPrompts / orchestrator.handleChat's spec).
+    CREATE TABLE IF NOT EXISTS saved_prompts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- From the Save Prompt modal: game type (a genre hint for the Builder),
+    -- run_auto (build as soon as it's picked, instead of filling the chat box
+    -- first) and show_on_home (a card on the New Chat screen).
+    ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'any';
+    ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS run_auto BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS show_on_home BOOLEAN NOT NULL DEFAULT FALSE;
+    -- A built game the user doesn't want listed under Saved prompts; the chat
+    -- and the game itself are untouched.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS hide_from_saved BOOLEAN NOT NULL DEFAULT FALSE;
   `);
   // game_files no longer exists on a fresh install (see the module comment
   // above) -- an install that predates this change may still have the old

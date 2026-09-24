@@ -61,18 +61,77 @@
 
       <main class="messages" id="messages" aria-live="polite"></main>
 
-      <div class="status" id="status" hidden></div>
+      <div class="status" id="status" role="status" hidden></div>
 
       <form class="composer" id="composer" autocomplete="off">
         <div class="composer-main">
+          <div class="saved-chip" id="savedChip" hidden>
+            <span class="saved-chip-text">⚡ Saved prompt<span id="savedChipTitle"></span> — builds instantly on Send</span>
+            <button type="button" class="saved-chip-close" id="savedChipClose" aria-label="Use as a normal message instead">✕</button>
+          </div>
           <textarea id="input" rows="1" maxlength="4000" placeholder="Describe a game idea, or just chat…" aria-label="Message"></textarea>
-          <div class="composer-hint" aria-hidden="true">Enter send · Shift+Enter new line</div>
+          <div class="composer-tools">
+            <button type="button" class="composer-tool" id="savePrompt" title="Save what's in the message box as a build-ready prompt">🔖 Save prompt</button>
+            <div class="composer-hint" aria-hidden="true">Enter send · Shift+Enter new line</div>
+          </div>
         </div>
         <button type="submit" id="send">Send</button>
         <button type="button" id="stop" class="ghost" hidden>Stop</button>
       </form>
     </section>
   </div>
+  <!-- Save Prompt modal: a saved prompt is a finalized, build-ready game prompt
+       (see main.js openSavePromptModal). -->
+  <dialog class="prompt-modal" id="savePromptModal" aria-labelledby="savePromptHeading">
+    <form class="prompt-modal-form" id="savePromptForm" method="dialog" novalidate>
+      <div class="prompt-modal-head">
+        <img class="prompt-modal-vi" src="./src/assets/vi/pose-1.png" alt="" aria-hidden="true">
+        <div>
+          <h2 id="savePromptHeading">Save Prompt</h2>
+          <p>Saved prompts are build-ready: using one starts building the game right away — no questions.</p>
+        </div>
+      </div>
+      <label class="prompt-field">
+        <span>Name</span>
+        <input type="text" id="savePromptName" maxlength="80" placeholder="e.g. Neon Snake" autocomplete="off">
+      </label>
+      <label class="prompt-field">
+        <span>Prompt</span>
+        <textarea id="savePromptText" rows="7" maxlength="20000" placeholder="Describe the game exactly as it should be built — genre, controls, rules, look and feel. Anything you leave out gets a sensible default."></textarea>
+      </label>
+      <div class="prompt-field-row">
+        <label class="prompt-field">
+          <span>Type</span>
+          <select id="savePromptType">
+            <option value="any">Any game</option>
+            <option value="arcade">Arcade</option>
+            <option value="platformer">Platformer</option>
+            <option value="puzzle">Puzzle</option>
+            <option value="shooter">Shooter</option>
+            <option value="racing">Racing</option>
+            <option value="strategy">Strategy</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label class="prompt-field">
+          <span>Run automatically</span>
+          <select id="savePromptRunAuto">
+            <option value="no">No — put it in the chat box first</option>
+            <option value="yes">Yes — build as soon as it's clicked</option>
+          </select>
+        </label>
+      </div>
+      <label class="prompt-check">
+        <input type="checkbox" id="savePromptShowHome">
+        <span>Show on the New Chat screen</span>
+      </label>
+      <div class="prompt-modal-error" id="savePromptError" role="alert" hidden></div>
+      <div class="prompt-modal-actions">
+        <button type="button" class="ghost" id="savePromptCancel">Cancel</button>
+        <button type="submit" id="savePromptSubmit">Save Prompt</button>
+      </div>
+    </form>
+  </dialog>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

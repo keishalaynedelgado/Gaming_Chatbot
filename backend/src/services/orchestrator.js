@@ -193,7 +193,7 @@ function formatGameDesignDoc(summary) {
   return `${body.replace(/^##\s*Game Design Summary/i, '# Game Design')}\n`;
 }
 
-async function buildGame({ id, state, message, mode, emit, signal }) {
+async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null }) {
   emit({ type: 'plan', op: 'start' });
   try {
     const currentFiles = mode === 'improve' ? await store.readProjectFiles(id, state) : null;
@@ -217,7 +217,7 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
     // timeout again -- there's no reason to think it recovered mid-build.
     let skipMeldcx = false;
     let { notes, files: newFiles, truncated, meldcxFailed } = await runBuilder({
-      user: prompts.builderUser({ state, messages: history, userMessage: message, currentFiles, prototype, todayISO }),
+      user: prompts.builderUser({ state, messages: history, userMessage: message, currentFiles, prototype, todayISO, fromSavedPrompt, promptType }),
       emit,
       signal,
       skipMeldcx,
@@ -349,21 +349,68 @@ async function buildGame({ id, state, message, mode, emit, signal }) {
 }
 
 // ------------------------------------------------------------------ Entry point
-async function handleChat({ id, message, emit, signal }) {
+// `spec` is a saved, already-finalized Game Design Summary (from the sidebar's
+// Saved prompts). With it, the request is treated as final: no intent check,
+// no discovery questions, no confirmation -- straight to the Builder, with the
+// exact same summary the game was originally built from.
+async function handleChat({ id, message, spec, promptType = null, emit, signal }) {
   if (busy.has(id)) {
     const err = new Error('Still working on your previous message. Please wait a moment.');
     err.status = 409;
     throw err;
   }
   busy.add(id);
+  // The chat exists -- with this message in it -- the moment the message
+  // arrives, before any AI call: a slow, failed or timed-out reply can never
+  // lose it, and the chat can be opened from the sidebar while the reply is
+  // still being generated. `state.messages` itself only gets the message once
+  // the turn is done (the agents add the current message to the history they
+  // send on their own), so the early save writes a snapshot that includes it.
+  const userMsg = { role: 'user', content: message, createdAt: new Date().toISOString() };
+  let state;
+  let activeId = id;
+  let recorded = false; // has userMsg been pushed into state.messages yet?
+  let savedEarly = false;
+  const saveEarly = async () => {
+    if (!state.title) {
+      state.title = autoTitle(message);
+      state.titleAuto = true;
+      // The database-backed title, sent right away so the sidebar shows it.
+      emit({ type: 'title', title: state.title, titleAuto: true });
+    }
+    await store.save(activeId, { ...state, messages: [...state.messages, userMsg] });
+    savedEarly = true;
+    emit({ type: 'saved', id: activeId });
+  };
   try {
-    let state = await store.get(id);
-    let activeId = id;
+    state = await store.get(id);
     let freshStart = false;
 
-    emit({ type: 'agent', agent: 'intent', status: 'start' });
-    let route = guardRoute(await detectIntent(state, message, signal), state);
-    emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
+    let route;
+    if (spec) {
+      // A saved game always gets a clean chat of its own, never mixed into an
+      // existing conversation or game.
+      if (state.hasGame || state.messages.length) {
+        activeId = randomUUID();
+        state = await store.get(activeId);
+        emit({ type: 'session', id: activeId });
+      }
+      await saveEarly();
+      // Saved prompts are shown without the heading; the Builder and
+      // docs/GAME_DESIGN.md expect the Planner's exact format, so restore it.
+      state.summary = /^\s*##\s*Game Design Summary/i.test(spec) ? spec : `## Game Design Summary\n\n${spec}`;
+      state.phase = 'plan';
+      route = 'build';
+    } else {
+      await saveEarly();
+      emit({ type: 'agent', agent: 'intent', status: 'start' });
+      route = guardRoute(await detectIntent(state, message, signal), state);
+      emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
+    }
+
+    // "Start a different game" from a chat that has nothing in it yet needs no
+    // new chat -- it just starts here.
+    if (route === 'new_game' && !state.messages.length) route = 'discover';
 
     if (route === 'new_game') {
       // A completely new game gets its own chat: a brand new session, so its
@@ -371,28 +418,43 @@ async function handleChat({ id, message, emit, signal }) {
       // Improving the current game, in contrast, always stays in this same
       // session (see buildGame/converse above) -- only this explicit "start
       // over with something different" case moves to a fresh one.
+      // The message moves with it: the old chat goes back to exactly how it
+      // was, and the new chat is created (with the message) straight away.
+      await store.save(id, state);
       activeId = randomUUID();
       state = await store.get(activeId);
       emit({ type: 'session', id: activeId });
+      await saveEarly();
       route = 'discover';
       freshStart = true;
     }
 
     const reply = route === 'build' || route === 'improve'
-      ? await buildGame({ id: activeId, state, message, mode: route, emit, signal })
+      ? await buildGame({ id: activeId, state, message, mode: route, emit, signal, fromSavedPrompt: Boolean(spec), promptType })
       : await converse(route, state, message, emit, signal, { freshStart });
 
-    const now = new Date().toISOString();
-    state.messages.push({ role: 'user', content: message, createdAt: now }, { role: 'assistant', content: reply, createdAt: now });
-    if (!state.title) {
-      state.title = autoTitle(message);
-      state.titleAuto = true;
-      // Tells the sidebar the real, database-backed title directly -- no
-      // client-side guessing needed, so it can never drift from what's
-      // actually stored.
-      emit({ type: 'title', title: state.title, titleAuto: true });
-    }
+    // The reply is appended to the chat that already holds the message.
+    state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });
+    recorded = true;
     await store.save(activeId, state);
+
+    // A fresh build that got this far succeeded, so its request + the exact
+    // summary it was built from are now a finalized prompt: the sidebar saves
+    // it, and reopening it rebuilds instantly (see `spec` above). Only fresh
+    // builds count -- improvements to an existing game aren't new prompts.
+    if (route === 'build') {
+      const request = state.messages.slice(state.historyStart).find((m) => m.role === 'user')?.content || message;
+      emit({ type: 'completed_prompt', title: state.title || autoTitle(request), request, spec: state.summary });
+    }
+  } catch (err) {
+    // Failed, timed out or stopped: the chat keeps the user's message (it was
+    // saved up front) -- also recorded in the in-memory state here, so the
+    // next turn's save can't drop it again.
+    if (savedEarly && !recorded) {
+      state.messages.push(userMsg);
+      await store.save(activeId, state).catch((e) => console.error('[orchestrator] could not keep the message after a failed turn:', e.message));
+    }
+    throw err;
   } finally {
     busy.delete(id);
   }

@@ -217,6 +217,105 @@ async function listSessions({ deleted = false } = {}) {
   }));
 }
 
+const GAME_TITLE_RE = /\*\*Title:?\*\*:?\s*(.+)/; // the Planner's "**Title**: X" line
+
+// The design as a finished, ready-to-build prompt: the Planner's closing
+// "does this match your vision?" paragraph and its "(default, tell me if
+// you'd like to change it)" notes are dropped -- that was already answered.
+function finalPrompt(summary) {
+  const paras = summary.trim().split(/\n{2,}/);
+  while (paras.length > 1 && !/^\s*(\*\*|[-*]\s|#)/.test(paras[paras.length - 1])) paras.pop();
+  return paras.join('\n\n')
+    .replace(/^\s*##\s*Game Design Summary\s*/i, '') // re-added when building (orchestrator.handleChat)
+    .replace(/\s*\(default[^)]*\)/gi, '')
+    .trim();
+}
+
+// The sidebar's Saved prompts: every game that has actually been built, as
+// the original request plus the finalized Game Design Summary it was built
+// from -- enough to rebuild it instantly (see orchestrator.handleChat's
+// `spec`). One entry per distinct design (a rebuild from a saved prompt makes
+// a new chat with the same summary), newest first; trashed chats are left out.
+async function listBuiltGames() {
+  const { rows } = await db.query(
+    `SELECT * FROM (
+       SELECT DISTINCT ON (s.summary) s.id, s.title, s.summary, s.updated_at,
+              (SELECT content FROM messages m
+                WHERE m.session_id = s.id AND m.role = 'user' AND m.seq >= s.history_start
+                ORDER BY m.seq LIMIT 1) AS request
+       FROM sessions s
+       WHERE s.has_game AND s.summary IS NOT NULL AND s.deleted_at IS NULL AND NOT s.hide_from_saved
+       ORDER BY s.summary, s.updated_at DESC
+     ) built
+     WHERE request IS NOT NULL
+     ORDER BY updated_at DESC
+     LIMIT 200`,
+  );
+  // Named after the game itself ("**Title**: ..." in the summary), since the
+  // chat's own title is often just its first message ("I want to make a game").
+  const gameTitle = (summary) => summary.match(GAME_TITLE_RE)?.[1].replace(/\(default[^)]*\)/i, '').replace(/[*_]/g, '').trim();
+  return rows.map((r) => ({
+    id: r.id,
+    title: gameTitle(r.summary) || r.title || r.request.slice(0, 60),
+    request: r.request,
+    spec: finalPrompt(r.summary),
+    savedAt: r.updated_at.toISOString(),
+  }));
+}
+
+// Saves a prompt the user wrote as a finalized, build-ready spec. Saving the
+// exact same text again just returns the existing one.
+// The prompt text is stored exactly as written. Saving the same text again
+// updates that entry's name and options instead of adding a duplicate.
+const SAVED_PROMPT_COLS = 'id, title, prompt, type, run_auto, show_on_home, created_at';
+async function createSavedPrompt({ name, prompt, type = 'any', runAuto = false, showOnHome = false }) {
+  const title = (name || '').trim() || promptTitle(prompt);
+  const id = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const { rows: existing } = await db.query('SELECT id FROM saved_prompts WHERE prompt = $1', [prompt]);
+  const { rows } = existing.length
+    ? await db.query(
+      `UPDATE saved_prompts SET title = $2, type = $3, run_auto = $4, show_on_home = $5, created_at = now() WHERE id = $1 RETURNING ${SAVED_PROMPT_COLS}`,
+      [existing[0].id, title, type, runAuto, showOnHome],
+    )
+    : await db.query(
+      `INSERT INTO saved_prompts (id, title, prompt, type, run_auto, show_on_home) VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${SAVED_PROMPT_COLS}`,
+      [id, title, prompt, type, runAuto, showOnHome],
+    );
+  return customPromptRow(rows[0]);
+}
+
+// Everything in the sidebar's Saved prompts: the user's own saved prompts
+// plus every game already built, newest first, one entry per distinct text.
+async function listSavedPrompts() {
+  const { rows } = await db.query(`SELECT ${SAVED_PROMPT_COLS} FROM saved_prompts ORDER BY created_at DESC LIMIT 200`);
+  const all = [...rows.map(customPromptRow), ...(await listBuiltGames())];
+  const seen = new Set();
+  return all
+    .filter((p) => (seen.has(p.spec) ? false : seen.add(p.spec)))
+    .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+}
+
+function customPromptRow(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    request: r.prompt,
+    spec: r.prompt,
+    type: r.type,
+    runAuto: r.run_auto,
+    showOnHome: r.show_on_home,
+    savedAt: r.created_at.toISOString(),
+    custom: true,
+  };
+}
+
+// "**Title**: X" if the prompt has one, else its first line, shortened.
+function promptTitle(text) {
+  const t = text.match(GAME_TITLE_RE)?.[1] || text.split('\n').find((l) => l.trim()) || 'Saved prompt';
+  const clean = t.replace(/\(default[^)]*\)/i, '').replace(/[*_#]/g, '').trim();
+  return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean;
+}
+
 // Renames only a non-deleted session (restore it first to rename a trashed
 // one) -- returns false if there was nothing to rename, so the route can
 // answer 404 rather than a silent, misleading success.
@@ -253,6 +352,9 @@ async function restoreSession(id) {
 
 module.exports = {
   isValidId,
+  listBuiltGames,
+  listSavedPrompts,
+  createSavedPrompt,
   get,
   save,
   saveProject,

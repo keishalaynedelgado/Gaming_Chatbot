@@ -44,36 +44,38 @@ function savePinnedIds(set) {
 }
 
 // ---------------------------------------------------------------- Saved prompts
-// Reusable prompts the user keeps for later. Like pins, a personal
-// convenience that lives only in localStorage. First run gets a few starters
-// so the tab isn't empty; once the key exists (even as []) they never return.
+// Build-ready prompts: the ones the user wrote and saved (🔖 Save prompt)
+// plus every game already built (its finalized Game Design Summary). The
+// database is the source (GET /api/saved-prompts); localStorage only caches
+// the last list so it paints instantly. Picking one loads it into the
+// composer, and sending it builds straight away: no questions, no confirmation.
 const PROMPTS_KEY = 'gc_saved_prompts';
 const TAB_KEY = 'gc_sidebar_tab';
-const STARTER_PROMPTS = [
-  'Make a retro platformer where a space owl collects stars and dodges comets.',
-  'Build a cozy farming game with three crops, a day/night cycle, and a shop.',
-  'Create a two-player local tic-tac-toe with a twist: the board grows every round.',
-  'Design a top-down dungeon crawler with keys, locked doors, and one boss fight.',
-];
+const PROMPT_TITLE_MAX = 48;
 
 function titleOf(text) {
   const firstLine = (text || '').trim().split('\n')[0].replace(/\s+/g, ' ');
-  return firstLine.length > 48 ? `${firstLine.slice(0, 48)}…` : firstLine;
+  return firstLine.length > PROMPT_TITLE_MAX ? `${firstLine.slice(0, PROMPT_TITLE_MAX)}…` : firstLine;
 }
 
-function newPrompt(text) {
-  return { id: `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, text: text.trim(), savedAt: new Date().toISOString() };
+function readJson(key, fallback) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || 'null');
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function loadPrompts() {
-  try {
-    const raw = localStorage.getItem(PROMPTS_KEY);
-    if (raw === null) return STARTER_PROMPTS.map(newPrompt);
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.filter((p) => p && typeof p.text === 'string' && p.id) : [];
-  } catch {
-    return [];
-  }
+  const arr = readJson(PROMPTS_KEY, []);
+  return Array.isArray(arr) ? arr.filter((p) => p && p.id && typeof p.spec === 'string' && p.spec && typeof p.request === 'string') : [];
+}
+
+async function apiListSavedPrompts() {
+  const res = await fetch('/api/saved-prompts');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()).prompts || [];
 }
 
 function savePrompts(prompts) {
@@ -236,7 +238,7 @@ async function apiRestore(id) {
 // Builds the whole sidebar (list, search, new/rename/delete/restore,
 // collapse) and returns a small API for main.js to drive it and keep it in
 // sync.
-function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
+function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPromptsChanged }) {
   const els = {
     tabs: document.getElementById('sidebarTabs'),
     tabChats: document.getElementById('tabChats'),
@@ -557,23 +559,34 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
     if (els.trashToggle) els.trashToggle.hidden = onPrompts; // the trash only holds chats
   }
 
-  function saveDraftAsPrompt(btn) {
-    const text = (getDraft?.() || '').trim();
-    if (!text) {
-      btn.textContent = 'Type a message first, then save it here';
-      setTimeout(() => { if (btn.isConnected) btn.textContent = '＋ Save current message'; }, 2200);
-      return;
+  async function loadPromptsFromServer() {
+    try {
+      prompts = await apiListSavedPrompts();
+      savePrompts(prompts);
+      render();
+    } catch {
+      /* keep showing the cached list */
     }
-    if (prompts.some((p) => p.text === text)) return;
-    prompts = [newPrompt(text), ...prompts];
-    savePrompts(prompts);
-    render();
   }
 
-  function deletePrompt(id) {
-    prompts = prompts.filter((p) => p.id !== id);
-    savePrompts(prompts);
+  // A fresh build just finished: show it at the top right away, then take the
+  // database's list (a rebuild of an existing design just moves it up).
+  function addCompletedPrompt({ title, request, spec }) {
+    if (!spec || !request) return;
+    const entry = { id: `local_${Date.now().toString(36)}`, title: title || titleOf(request), request, spec, savedAt: new Date().toISOString() };
+    prompts = [entry, ...prompts.filter((p) => p.spec !== spec)];
     render();
+    loadPromptsFromServer();
+  }
+
+  // Picking a saved prompt loads it into a fresh chat's composer, ready to
+  // edit; sending it then builds immediately (see main.js).
+  function pickPrompt(prompt) {
+    store.activeChatId = null;
+    save();
+    render();
+    closeMobileDrawer();
+    onPickPrompt?.(prompt);
   }
 
   function buildPromptItem(prompt) {
@@ -584,50 +597,36 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
     const main = document.createElement('button');
     main.type = 'button';
     main.className = 'chat-item-main';
-    main.title = prompt.text;
+    main.title = `Load "${prompt.title}" into the chat box — Send builds it right away`;
     const title = document.createElement('span');
     title.className = 'chat-item-title';
-    title.textContent = titleOf(prompt.text);
+    title.textContent = titleOf(prompt.title);
     const meta = document.createElement('span');
     meta.className = 'chat-item-meta';
-    meta.textContent = `Saved ${formatWhen(prompt.savedAt)}`;
+    meta.textContent = `⚡ Builds on Send · ${formatWhen(prompt.savedAt)}`;
     main.append(title, meta);
-    main.addEventListener('click', () => { onUsePrompt?.(prompt.text); closeMobileDrawer(); });
+    main.addEventListener('click', () => pickPrompt(prompt));
 
-    const actions = document.createElement('span');
-    actions.className = 'chat-item-actions';
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className = 'chat-item-action danger';
-    deleteBtn.title = 'Delete';
-    deleteBtn.setAttribute('aria-label', 'Delete saved prompt');
-    deleteBtn.textContent = '🗑';
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (window.confirm(`Delete the saved prompt "${titleOf(prompt.text)}"?`)) deletePrompt(prompt.id);
-    });
-    actions.appendChild(deleteBtn);
-
-    li.append(main, actions);
+    li.append(main);
     return li;
   }
 
   function renderPrompts() {
-    const saveLi = document.createElement('li');
-    const saveBtn = document.createElement('button');
-    saveBtn.type = 'button';
-    saveBtn.className = 'sidebar-save-prompt';
-    saveBtn.textContent = '＋ Save current message';
-    saveBtn.addEventListener('click', () => saveDraftAsPrompt(saveBtn));
-    saveLi.appendChild(saveBtn);
-    els.list.appendChild(saveLi);
+    const newLi = document.createElement('li');
+    const newBtn = document.createElement('button');
+    newBtn.type = 'button';
+    newBtn.className = 'sidebar-new-prompt';
+    newBtn.textContent = '＋ New saved prompt';
+    newBtn.addEventListener('click', () => { closeMobileDrawer(); onNewPrompt?.(); });
+    newLi.appendChild(newBtn);
+    els.list.appendChild(newLi);
 
     const needle = filter.toLowerCase();
-    const shown = prompts.filter((p) => !needle || p.text.toLowerCase().includes(needle));
+    const shown = prompts.filter((p) => !needle || `${p.title}\n${p.request}`.toLowerCase().includes(needle));
     if (!shown.length) {
       const empty = document.createElement('li');
       empty.className = 'chat-list-empty';
-      empty.textContent = filter ? 'No saved prompts match your search.' : 'No saved prompts yet — type a message and save it here.';
+      empty.textContent = filter ? 'No saved prompts match your search.' : 'No saved prompts yet — save your own with 🔖 Save prompt, and every game you build shows up here too.';
       els.list.appendChild(empty);
       return;
     }
@@ -638,6 +637,7 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
     els.list.innerHTML = '';
     els.chatCount.textContent = String(store.chats.length);
     els.promptCount.textContent = String(prompts.length);
+    onPromptsChanged?.(prompts);
 
     if (tab === 'prompts' && !trashView) {
       renderPrompts();
@@ -704,7 +704,7 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
   // what's actually in the database. `bump` controls whether this counts as
   // new activity (moves it to the top / updates its timestamp) -- true for
   // an actual new turn, false when just re-syncing after a fetch.
-  function upsert(id, { messages, hasGame, gameUrl, title, titleAuto }, { bump }) {
+  function upsert(id, { messages, hasGame, gameUrl, title, titleAuto }, { bump, activate = true }) {
     let chat = store.chats.find((c) => c.id === id);
     const last = messages[messages.length - 1];
     if (!chat) {
@@ -715,10 +715,12 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
       chat.titleAuto = titleAuto !== false;
     }
     chat.lastMessage = last ? last.content : chat.lastMessage;
-    chat.hasGame = Boolean(hasGame);
-    chat.gameUrl = hasGame ? gameUrl : null;
+    if (hasGame !== undefined) {
+      chat.hasGame = Boolean(hasGame);
+      chat.gameUrl = hasGame ? gameUrl : null;
+    }
     if (bump) chat.updatedAt = new Date().toISOString();
-    store.activeChatId = id;
+    if (activate) store.activeChatId = id;
     save();
     render();
   }
@@ -766,7 +768,6 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
     switchTab(next);
     (next === 'chats' ? els.tabChats : els.tabPrompts).focus();
   });
-  try { if (localStorage.getItem(PROMPTS_KEY) === null) savePrompts(prompts); } catch { /* storage unavailable */ } // lock in the starters' ids
   applyTab();
   function startNewChat() {
     store.activeChatId = null;
@@ -790,6 +791,7 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
   else applyCollapsed(loadCollapsed());
   render(); // instant paint from cache
   loadFromServer(); // then reconcile with the database, the authoritative copy
+  loadPromptsFromServer(); // same for the saved (already built) games
 
   // Only the initial load decides which mode to start in; this keeps it
   // correct if the viewport is later resized across the breakpoint (a
@@ -811,6 +813,19 @@ function initSidebar({ onSelect, onNewDraft, onUsePrompt, getDraft }) {
     getActiveId: () => store.activeChatId,
     recordActivity: (id, state) => upsert(id, state, { bump: true }),
     refreshCache: (id, state) => upsert(id, state, { bump: false }),
+    // Updates a chat's list entry mid-turn (title, new session, final reply)
+    // without making it the selected chat if the user has moved elsewhere.
+    updateChat: (id, state, { bump = false, activate = true } = {}) => upsert(id, state, { bump, activate }),
+    addCompletedPrompt,
+    refreshSavedPrompts: loadPromptsFromServer,
+    // A prompt the server just confirmed saving: listed and cached at once, so
+    // it's there after a refresh even if the follow-up list fetch fails.
+    addSavedPrompt: (p) => {
+      if (!p || !p.spec) return;
+      prompts = [p, ...prompts.filter((x) => x.spec !== p.spec)];
+      savePrompts(prompts);
+      render();
+    },
   };
 }
 

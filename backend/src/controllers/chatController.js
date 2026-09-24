@@ -1,6 +1,8 @@
 'use strict';
 const { json, readBody } = require('../middleware/http');
 const { MAX_MESSAGE } = require('../config/constants');
+
+const MAX_SPEC = 20000; // a saved Game Design Summary (see orchestrator.handleChat)
 const store = require('../services/store');
 const { handleChat } = require('../services/orchestrator');
 
@@ -16,7 +18,11 @@ async function postChat(req, res) {
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   if (!store.isValidId(body.sessionId)) return json(res, 400, { error: 'Invalid session id' });
   if (!message) return json(res, 400, { error: 'Empty message' });
-  if (message.length > MAX_MESSAGE) return json(res, 400, { error: `Message is limited to ${MAX_MESSAGE} characters` });
+  const spec = typeof body.spec === 'string' ? body.spec.trim() : '';
+  if (spec.length > MAX_SPEC) return json(res, 400, { error: `Saved prompt is limited to ${MAX_SPEC} characters` });
+  // A saved prompt is sent as the message itself, so it gets the saved-prompt limit.
+  const maxMessage = spec ? MAX_SPEC : MAX_MESSAGE;
+  if (message.length > maxMessage) return json(res, 400, { error: `Message is limited to ${maxMessage} characters` });
 
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -33,7 +39,9 @@ async function postChat(req, res) {
   });
 
   try {
-    await handleChat({ id: body.sessionId, message, emit, signal: ac.signal });
+    // Game type from the Save Prompt modal -- only a hint for the Builder.
+    const promptType = spec && typeof body.promptType === 'string' && /^[a-z]{1,20}$/.test(body.promptType) ? body.promptType : null;
+    await handleChat({ id: body.sessionId, message, spec: spec || null, promptType, emit, signal: ac.signal });
     emit({ type: 'done' });
   } catch (err) {
     if (!ac.signal.aborted) {
