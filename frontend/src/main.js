@@ -29,29 +29,58 @@ const MAX_MESSAGE_LEN = 4000;
 const MAX_SAVED_PROMPT_LEN = 20000; // matches the server's saved-prompt limit
 let savedPromptMode = false;
 let savedPromptType = null; // the saved prompt's Type, sent along as a Builder hint
+let savedPromptId = null; // the user's saved prompt being built, linked to the finished game
 let savedPromptsCache = []; // latest Saved prompts list, for the New Chat screen's cards
 
-function setSavedPromptMode(on, title = '', type = null) {
+function setSavedPromptMode(on, title = '', type = null, id = null) {
   savedPromptMode = on;
   savedPromptType = on ? type : null;
+  savedPromptId = on ? id : null;
   els.savedChip.hidden = !on;
   els.savedChipTitle.textContent = on && title ? `: ${title}` : '';
   els.input.maxLength = on ? MAX_SAVED_PROMPT_LEN : MAX_MESSAGE_LEN;
 }
 
 let sessionId = null;
-let controller = null;
 let messages = []; // the active chat's history, mirrored to the sidebar after every turn
 let currentGameUrl = null; // persists across turns once a game exists, even on turns that don't rebuild it
-// The turn currently being generated. Its chat can be left (another chat or a
-// new one opened) while the reply is still coming -- it then keeps running in
-// the background ("hidden") and is saved to its own chat, never drawn into
-// whichever chat is on screen.
-let activeTurn = null;
+// Every chat runs its own turn, independently: replies can be generating in
+// several chats at once, and switching chats never stops, resets or mixes
+// them. A turn draws into the page only while its chat is on screen
+// ("attached"); otherwise it keeps streaming into its own state (reply text,
+// plan progress, status) and is redrawn as soon as its chat is opened again
+// (see attachTurn).
+const turns = new Map(); // session id -> its in-progress turn
+const currentTurn = () => turns.get(sessionId);
 
-// Leaving the chat whose reply is still generating: keep it running unseen.
-function hideActiveTurn() {
-  if (activeTurn) activeTurn.visible = false;
+// Leaving the chat on screen: every turn keeps running, just unseen.
+function detachTurns() {
+  for (const t of turns.values()) {
+    t.attached = false;
+    t.bubble = null;
+    t.plan = null;
+  }
+}
+
+function applyPlanEvent(turn, evt) {
+  if (evt.op === 'start') turn.plan = planStart(evt.steps);
+  else if (evt.op === 'step' && evt.id) planTrack(turn.plan, evt);
+  else if (evt.op === 'step') planStep(turn.plan, evt.label);
+  else if (evt.op === 'done') planFinish(turn.plan, true);
+  else if (evt.op === 'error') planFinish(turn.plan, false);
+}
+
+// Back on a chat whose reply is still generating: redraw its progress and the
+// reply so far, then keep updating live.
+function attachTurn(turn) {
+  turn.attached = true;
+  for (const evt of turn.planEvents) applyPlanEvent(turn, evt);
+  if (turn.raw) {
+    turn.bubble = addMessage('assistant', '');
+    turn.bubble.innerHTML = renderMarkdown(turn.raw);
+  }
+  for (const msg of turn.errors) addMessage('error', msg);
+  scrollDown();
 }
 
 // ---------------------------------------------------------------- Theme
@@ -241,11 +270,15 @@ function setStatus(text) {
   setMascotStatus(cornerMascot, text);
 }
 
-function setBusy(busy) {
-  els.send.disabled = busy;
-  els.input.disabled = busy;
-  els.stop.hidden = !busy;
-  if (!busy) { setStatus(''); els.input.focus(); }
+// The composer reflects only the chat on screen: busy (Stop shown, input
+// locked, its status in Vi's bubble) while that chat has a reply generating;
+// other chats stay free to use.
+function refreshComposer() {
+  const turn = currentTurn();
+  els.send.disabled = Boolean(turn);
+  els.input.disabled = Boolean(turn);
+  els.stop.hidden = !turn;
+  setStatus(turn?.status || '');
 }
 
 // ---------------------------------------------------------------- Game tab
@@ -302,9 +335,55 @@ function setStepIcon(li, state) {
   icon.textContent = state === 'done' ? '✓' : state === 'error' ? '⚠' : '';
 }
 
-function planStart() {
+// A tracked build plan (see backend planRunner.js): every step is listed up
+// front, then each one's status updates in place -- pending, running, done,
+// retrying, skipped or failed -- with a running "done of total" count.
+const TRACK_ICONS = { pending: '', active: '', retry: '', done: '✓', skipped: '–', failed: '⚠' };
+
+function planTrack(card, evt) {
+  if (!card) return;
+  const li = card.querySelector(`.plan-step[data-id="${CSS.escape(evt.id)}"]`);
+  if (!li) return;
+  li.className = `plan-step plan-${evt.status}`;
+  const icon = li.querySelector('.plan-icon');
+  const spinning = evt.status === 'active' || evt.status === 'retry';
+  icon.className = `plan-icon ${spinning ? 'plan-spin' : `plan-${evt.status}`}`;
+  icon.textContent = TRACK_ICONS[evt.status] ?? '';
+  const detail = li.querySelector('.plan-detail');
+  detail.textContent = evt.detail ? ` — ${evt.detail}` : '';
+  if (evt.progress) card.querySelector('.plan-count').textContent = `${evt.progress.done}/${evt.progress.total}`;
+}
+
+function planStart(steps) {
   const card = document.createElement('div');
   card.className = 'plan-card';
+  if (Array.isArray(steps) && steps.length) {
+    const head = document.createElement('div');
+    head.className = 'plan-head';
+    head.innerHTML = '<span class="plan-icon plan-spin" aria-hidden="true"></span><span>Plan</span><span class="plan-count"></span>';
+    head.querySelector('.plan-count').textContent = `0/${steps.length}`;
+    const list = document.createElement('ul');
+    list.className = 'plan-steps';
+    for (const s of steps) {
+      const li = document.createElement('li');
+      li.className = 'plan-step plan-pending';
+      li.dataset.id = s.id;
+      const icon = document.createElement('span');
+      icon.className = 'plan-icon plan-pending';
+      icon.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.textContent = s.label;
+      const detail = document.createElement('span');
+      detail.className = 'plan-detail';
+      label.appendChild(detail);
+      li.append(icon, label);
+      list.appendChild(li);
+    }
+    card.append(head, list);
+    els.messages.appendChild(card);
+    scrollDown();
+    return card;
+  }
   const head = document.createElement('div');
   head.className = 'plan-head';
   const spin = document.createElement('span');
@@ -338,6 +417,21 @@ function planStep(card, label) {
   scrollDown();
 }
 
+// Stop: freeze the progress card -- running steps are marked stopped and
+// nothing spins on.
+function planStop(card) {
+  if (!card) return;
+  card.querySelector('.plan-head .plan-spin')?.remove();
+  for (const li of card.querySelectorAll('.plan-step.active, .plan-step.plan-active, .plan-step.plan-retry')) {
+    li.className = 'plan-step plan-skipped';
+    const icon = li.querySelector('.plan-icon');
+    icon.className = 'plan-icon plan-skipped';
+    icon.textContent = '–';
+    const detail = li.querySelector('.plan-detail');
+    if (detail) detail.textContent = ' — Stopped';
+  }
+}
+
 function planFinish(card, ok) {
   if (!card) return;
   const active = card.querySelector('.plan-steps .plan-step.active');
@@ -350,9 +444,9 @@ function planFinish(card, ok) {
 // straight to building it (see orchestrator.handleChat).
 async function send(text, opts = {}) {
   text = text.trim();
-  if (!text || controller) return;
+  if (!text || currentTurn()) return; // this chat already has a reply generating
   if (savedPromptMode) {
-    opts = { ...opts, spec: text, promptType: savedPromptType };
+    opts = { ...opts, spec: text, promptType: savedPromptType, savedPromptId };
     setSavedPromptMode(false);
   }
   els.messages.querySelector('.welcome')?.remove();
@@ -361,71 +455,84 @@ async function send(text, opts = {}) {
   els.input.value = '';
   autoGrow();
 
+  // Everything about this turn lives on it, so it can keep going while its
+  // chat isn't on screen -- and never touches another chat's state.
+  const turn = {
+    session: sessionId,
+    messages, // this chat's history (the same array while it's on screen)
+    attached: true,
+    controller: new AbortController(),
+    raw: '', // the reply so far
+    bubble: null,
+    plan: null,
+    planEvents: [], // replayed to redraw the progress card on return
+    errors: [],
+    status: '',
+    saved: false,
+    builtGameUrl: null,
+    newTitle: null,
+    newTitleAuto: null,
+  };
+  const shown = () => turn.attached && sessionId === turn.session;
+  turns.set(turn.session, turn);
   // The chat exists from this moment: listed in the sidebar right away (the
   // server saves it before the AI starts, and confirms the real title).
-  const turn = { session: sessionId, messages, visible: true };
-  activeTurn = turn;
   sidebar.recordActivity(turn.session, { messages: turn.messages, hasGame: Boolean(currentGameUrl), gameUrl: currentGameUrl });
-
-  controller = new AbortController();
-  setBusy(true);
-  let bubble = null;
-  let raw = '';
-  let builtGameUrl = null;
-  let plan = null;
-  let newTitle = null;
-  let newTitleAuto = null;
+  refreshComposer();
 
   const handle = (evt) => {
     if (evt.type === 'agent') {
-      if (evt.status === 'start') setStatus(`${AGENTS[evt.agent] || 'Working'}…`);
-      else if (evt.status === 'progress' && evt.detail) setStatus(`${AGENTS[evt.agent] || 'Working'}: ${evt.detail}…`);
+      if (evt.status === 'start') turn.status = `${AGENTS[evt.agent] || 'Working'}…`;
+      else if (evt.status === 'progress' && evt.detail) turn.status = `${AGENTS[evt.agent] || 'Working'}: ${evt.detail}…`;
+      if (shown()) setStatus(turn.status);
     } else if (evt.type === 'text') {
-      raw += evt.delta;
-      if (!turn.visible) return;
-      if (!bubble) bubble = addMessage('assistant', '');
-      bubble.innerHTML = renderMarkdown(raw);
+      turn.raw += evt.delta;
+      if (!shown()) return;
+      if (!turn.bubble) turn.bubble = addMessage('assistant', '');
+      turn.bubble.innerHTML = renderMarkdown(turn.raw);
       scrollDown();
     } else if (evt.type === 'game') {
       // The game event arrives before the notes/QA text for this turn, so open the
       // tab immediately; the link is attached to the bubble once it exists below.
-      builtGameUrl = evt.url;
-      if (turn.visible) currentGameUrl = evt.url;
-      openGame(evt.url);
+      turn.builtGameUrl = evt.url;
+      if (shown()) currentGameUrl = evt.url;
+      if (evt.autoOpen !== false) openGame(evt.url); // reused saved games wait for the user's click
     } else if (evt.type === 'plan') {
-      if (!turn.visible) return;
-      if (evt.op === 'start') plan = planStart();
-      else if (evt.op === 'step') planStep(plan, evt.label);
-      else if (evt.op === 'done') planFinish(plan, true);
-      else if (evt.op === 'error') planFinish(plan, false);
+      turn.planEvents.push(evt);
+      if (shown()) applyPlanEvent(turn, evt);
     } else if (evt.type === 'session') {
-      // A completely new game got its own fresh session -- switch to it and
-      // reset the visible chat so this game's conversation never mixes with
-      // the previous one's. The message that triggered this (already shown
-      // above) is re-added so the new chat starts from it.
+      // A completely new game got its own fresh session: the turn moves to
+      // it, and (if on screen) the view follows, starting from this message.
+      const wasShown = shown();
+      turns.delete(turn.session);
       turn.session = evt.id;
+      turns.set(turn.session, turn);
       turn.messages = [{ role: 'user', content: text }];
-      newTitle = null; // a fresh session gets its own title event again below
-      newTitleAuto = null;
-      if (turn.visible) {
+      turn.newTitle = null; // a fresh session gets its own title event again below
+      turn.newTitleAuto = null;
+      if (wasShown) {
         sessionId = evt.id;
         messages = turn.messages;
         currentGameUrl = null;
         els.messages.innerHTML = '';
         addMessage('user', text);
-        bubble = null;
+        turn.bubble = null;
+        turn.plan = null;
       }
-      sidebar.updateChat(turn.session, { messages: turn.messages, hasGame: false, gameUrl: null }, { activate: turn.visible });
+      sidebar.updateChat(turn.session, { messages: turn.messages, hasGame: false, gameUrl: null }, { activate: wasShown });
+    } else if (evt.type === 'saved') {
+      turn.saved = true; // the server has this turn -- it survives a dropped connection
     } else if (evt.type === 'completed_prompt') {
       sidebar.addCompletedPrompt(evt);
     } else if (evt.type === 'title') {
       // The database-authoritative title for a brand new chat -- see
       // orchestrator.js. Never guessed client-side.
-      newTitle = evt.title;
-      newTitleAuto = evt.titleAuto;
-      sidebar.updateChat(turn.session, { messages: turn.messages, title: newTitle, titleAuto: newTitleAuto }, { activate: turn.visible });
+      turn.newTitle = evt.title;
+      turn.newTitleAuto = evt.titleAuto;
+      sidebar.updateChat(turn.session, { messages: turn.messages, title: turn.newTitle, titleAuto: turn.newTitleAuto }, { activate: shown() });
     } else if (evt.type === 'error') {
-      if (turn.visible) addMessage('error', evt.message);
+      turn.errors.push(evt.message);
+      if (shown()) addMessage('error', evt.message);
     }
   };
 
@@ -433,8 +540,11 @@ async function send(text, opts = {}) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, message: text, spec: opts.spec || undefined, promptType: opts.promptType || undefined }),
-      signal: controller.signal,
+      body: JSON.stringify({
+        sessionId: turn.session, message: text, spec: opts.spec || undefined, promptType: opts.promptType || undefined,
+        loadGame: opts.loadGame || undefined, savedPromptId: opts.savedPromptId || undefined,
+      }),
+      signal: turn.controller.signal,
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -456,53 +566,71 @@ async function send(text, opts = {}) {
         }
       }
     }
-    if (raw) turn.messages.push({ role: 'assistant', content: raw });
-    if (turn.visible) {
-      if (bubble) renderAssistantContent(bubble, raw);
-      if (builtGameUrl) appendGameLink(builtGameUrl, bubble);
+    if (turn.raw) turn.messages.push({ role: 'assistant', content: turn.raw });
+    if (shown()) {
+      if (turn.bubble) renderAssistantContent(turn.bubble, turn.raw);
+      if (turn.builtGameUrl) appendGameLink(turn.builtGameUrl, turn.bubble);
     }
   } catch (err) {
-    if (turn.visible) {
+    // The connection dropped after the server took the turn: it keeps working
+    // (only Stop cancels), so wait for the result instead of reporting failure.
+    const lostConnection = err.name !== 'AbortError' && err instanceof TypeError && turn.saved;
+    if (lostConnection) waitForTurn(turn);
+    if (err.name === 'AbortError' && shown()) planStop(turn.plan);
+    if (shown()) {
       if (err.name === 'AbortError') addMessage('error', 'Stopped. Your message is kept in this chat — send it again whenever you like.');
+      else if (lostConnection) addMessage('error', 'The connection to the server dropped, but Vi is still working on this in the background. This chat will update by itself when it’s done.');
       else addMessage('error', err.message || 'Could not reach the server.');
     }
   } finally {
-    controller = null;
-    activeTurn = null;
-    setBusy(false);
-    const gameUrl = builtGameUrl || (turn.visible ? currentGameUrl : null);
-    sidebar.updateChat(turn.session, { messages: turn.messages, hasGame: Boolean(gameUrl), gameUrl, title: newTitle, titleAuto: newTitleAuto }, { bump: true, activate: turn.visible });
-    // Back on that chat while its reply finished unseen: show the saved result.
-    if (!turn.visible && sessionId === turn.session) loadChat(turn.session);
+    turns.delete(turn.session);
+    const onScreen = shown();
+    const gameUrl = turn.builtGameUrl || (onScreen ? currentGameUrl : null);
+    sidebar.updateChat(turn.session, { messages: turn.messages, hasGame: Boolean(gameUrl), gameUrl, title: turn.newTitle, titleAuto: turn.newTitleAuto }, { bump: true, activate: onScreen });
+    if (sessionId === turn.session) {
+      // Its chat was reopened but not yet redrawn when it finished: show the saved result.
+      if (!onScreen) loadChat(turn.session);
+      refreshComposer();
+      if (onScreen) els.input.focus();
+    }
   }
 }
 
 // Loads one chat's full history from the server (the authoritative copy --
 // see chats.js) and renders it, replacing whatever was shown before. Used
-// both for the initial page load and every sidebar chat switch.
+// both for the initial page load and every sidebar chat switch. A reply
+// still generating in the chat being left keeps going in the background; one
+// generating in the chat being opened is redrawn and continues live.
 async function loadChat(id) {
-  hideActiveTurn(); // a reply still generating carries on in the background
+  detachTurns();
   sessionId = id;
+  refreshComposer();
   try {
     const res = await fetch(`/api/session/${id}`);
     if (!res.ok) throw new Error();
     const data = await res.json();
-    messages = data.messages.slice();
+    if (sessionId !== id) return; // switched again while this was loading
+    const turn = turns.get(id);
+    // A brand-new chat may not be in the database yet: fall back to its turn.
+    const list = data.messages.length ? data.messages : turn ? turn.messages : [];
+    messages = turn ? turn.messages : list.slice();
     currentGameUrl = data.gameUrl;
-    if (!data.messages.length) {
+    if (!list.length) {
       showWelcome();
     } else {
       els.messages.innerHTML = '';
       let lastAssistant = null;
-      for (const m of data.messages) {
+      for (const m of list) {
         const div = addMessage(m.role, m.content);
         if (m.role === 'assistant') lastAssistant = div;
       }
       // Don't auto-open a tab just from loading/reloading the chat; only offer the link.
-      if (data.gameUrl) appendGameLink(data.gameUrl, lastAssistant);
+      if (data.gameUrl && !turn) appendGameLink(data.gameUrl, lastAssistant);
     }
-    sidebar.refreshCache(id, { messages, hasGame: data.hasGame, gameUrl: data.gameUrl, title: data.title, titleAuto: data.titleAuto });
+    if (turn) attachTurn(turn);
+    sidebar.refreshCache(id, { messages: list, hasGame: data.hasGame, gameUrl: data.gameUrl, title: data.title, titleAuto: data.titleAuto });
   } catch {
+    if (sessionId !== id) return;
     messages = [];
     currentGameUrl = null;
     showWelcome();
@@ -512,12 +640,14 @@ async function loadChat(id) {
 // Starts a brand new, empty chat -- generates a fresh id but does not touch
 // the sidebar's saved list at all (chats.js only ever adds an entry once a
 // chat actually has a message, so an unused draft just quietly disappears).
+// Replies generating in other chats keep going.
 function startNewDraft() {
-  hideActiveTurn(); // a reply still generating carries on in the background
+  detachTurns();
   sessionId = crypto.randomUUID();
   messages = [];
   currentGameUrl = null;
   showWelcome();
+  refreshComposer();
   els.input.focus();
 }
 
@@ -609,18 +739,13 @@ modal.form.addEventListener('submit', async (e) => {
 
 els.savePrompt.addEventListener('click', () => openSavePromptModal(savedPromptMode ? '' : els.input.value));
 
-// Using a saved prompt: "Run automatically" ones build the moment they're
-// picked; the rest go into the chat box, exactly as saved, to edit if wanted --
-// and Send then builds straight away (no questions, planning or confirmation).
+// Using a saved prompt: it goes into the chat box of a new chat, exactly as
+// saved, to edit if wanted -- and Send then generates the game straight away
+// (no questions, planning or confirmation).
 function useSavedPrompt(p) {
-  if (controller) return;
-  startNewDraft();
-  if (p.runAuto) {
-    send(p.spec, { spec: p.spec, promptType: p.type });
-    return;
-  }
+  startNewDraft(); // its own new chat -- fine even while other chats are busy
   els.input.value = p.spec;
-  setSavedPromptMode(true, p.title, p.type);
+  setSavedPromptMode(true, p.title, p.type, p.custom ? p.id : null);
   autoGrow();
   els.input.focus();
   els.input.setSelectionRange(0, 0);
@@ -653,7 +778,7 @@ function renderWelcomeSavedPrompts() {
     body.textContent = p.spec.replace(/[*_#]/g, '').replace(/\s+/g, ' ').trim();
     const meta = document.createElement('span');
     meta.className = 'welcome-saved-meta';
-    meta.textContent = p.runAuto ? '⚡ Builds when clicked' : '⚡ Builds on Send';
+    meta.textContent = '⚡ Builds on Send';
     card.append(title, body, meta);
     card.addEventListener('click', () => useSavedPrompt(p));
     grid.appendChild(card);
@@ -665,7 +790,38 @@ els.savedChipClose.addEventListener('click', () => { setSavedPromptMode(false); 
 els.input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(els.input.value); }
 });
-els.stop.addEventListener('click', () => controller?.abort());
+// Stop is the only thing that cancels a turn on the server (a dropped
+// connection doesn't), so tell it explicitly, then close the stream.
+els.stop.addEventListener('click', () => {
+  const turn = currentTurn(); // only this chat's reply -- other chats keep going
+  if (!turn) return;
+  fetch(`/api/session/${turn.session}/stop`, { method: 'POST' }).catch(() => { /* the abort below still ends it here */ });
+  turn.controller.abort();
+});
+
+// After a dropped connection: poll the chat until the server has saved the
+// reply (one more message than this turn had), then show it -- if that chat
+// is still the one on screen -- and refresh its sidebar entry.
+const RECOVER_POLL_MS = 5000;
+const RECOVER_MAX_MS = 30 * 60 * 1000;
+async function waitForTurn(turn) {
+  const known = turn.messages.length; // includes this turn's user message
+  const deadline = Date.now() + RECOVER_MAX_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, RECOVER_POLL_MS));
+    try {
+      const res = await fetch(`/api/session/${turn.session}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.messages.length <= known) continue;
+      sidebar.refreshCache(turn.session, { messages: data.messages, hasGame: data.hasGame, gameUrl: data.gameUrl, title: data.title, titleAuto: data.titleAuto });
+      if (sessionId === turn.session && !turns.has(turn.session)) loadChat(turn.session);
+      return;
+    } catch {
+      /* still offline -- keep waiting */
+    }
+  }
+}
 els.themeToggle?.addEventListener('click', toggleTheme);
 // Vi's small corner companion, docked to the chat input; CSS keeps it hidden until the first message replaces the welcome screen.
 const cornerMascot = createMascot({

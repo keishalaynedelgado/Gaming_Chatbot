@@ -148,7 +148,7 @@ function transcript(messages) {
     .join('\n\n');
 }
 
-function builderUser({ state, messages, userMessage, currentFiles, prototype, todayISO, fromSavedPrompt = false, promptType = null }) {
+function builderUser({ state, messages, userMessage, currentFiles, prototype, todayISO, fromSavedPrompt = false, promptType = null, projectPlan = null }) {
   const parts = [
     `## Mode\n${prototype ? 'ONE-FILE PROTOTYPE MODE -- output only frontend/index.html, fully self-contained.' : 'PROJECT STRUCTURE MODE (default) -- use the full folder structure from your instructions, omitting only what genuinely does not apply.'}`,
     `## Today's date\n${todayISO}`,
@@ -159,6 +159,7 @@ function builderUser({ state, messages, userMessage, currentFiles, prototype, to
     parts.push('## Saved prompt\nThis design comes from a saved, finalized prompt the user chose to build right away: there will be no questions or confirmation. Implement every mechanic, setting and specification exactly as written. Wherever something essential to a playable game is missing or vague (controls, win/lose rules, scoring, difficulty, visuals, audio), pick a sensible, conventional default for this kind of game and build it -- never stop to ask.');
     if (promptType && promptType !== 'any') parts.push(`## Game type\nThe user filed this prompt as a ${promptType} game. Use it only to fill gaps the prompt leaves open; the prompt's own words always win.`);
   }
+  if (projectPlan?.length) parts.push(projectPlanBlock(projectPlan));
   if (currentFiles && Object.keys(currentFiles).length) {
     parts.push(`## Current project files\n${qa.serializeFiles(currentFiles)}`);
     parts.push('## Task\nApply the change the user just requested. Output the notes, then ONLY the files you are adding or changing.');
@@ -175,8 +176,44 @@ function builderRepairUser({ state, currentFiles, errors }) {
 // Used when a generation got cut off by the token limit before finishing. The
 // caller has already dropped whatever file was mid-write when that happened, so
 // what's shown here is only genuinely complete, finished files.
-function builderContinueUser({ state, currentFiles }) {
-  return `## Game Design Summary\n${state.summary || '(none)'}\n\n## Files you have ALREADY finished (complete and correct -- do not repeat or rewrite these)\n${qa.serializeFiles(currentFiles)}\n\n## Task\nYour previous response was cut off before the project was finished. Continue now: output the notes, then ONLY the remaining files this project still needs. If you were in the middle of a file when cut off, that file was discarded -- rewrite it completely from scratch as part of this response.`;
+// ------------------------------------------------------------ Project planner
+// The "Planning project" step of a full build: before any code is written,
+// turn the design into the concrete list of files the project needs. The
+// Builder then gets it as a checklist, and the build checks every planned
+// file was actually delivered (see orchestrator.buildGame).
+const PROJECT_PLANNER = `You are the Project Planner for a browser game build. Before any code is written, decide exactly which files the project needs.
+
+Follow the project layout the Builder uses:
+- frontend/index.html (the page that gets played; loads ./src/main.js as a module plus the CSS)
+- frontend/src/main.js (entry point) and frontend/src/App.js (top-level wiring and the game loop)
+- frontend/src/game/ for gameplay logic (entities, physics, levels), split into small focused modules
+- frontend/src/components/ for UI pieces (HUD, menus), frontend/src/scenes/ only if there are several distinct screens
+- frontend/src/styles/ for CSS, frontend/src/utils/ for small shared helpers
+- frontend/src/assets/README.md (visuals are drawn in code, audio is synthesised)
+- frontend/package.json, docs/README.md, docs/CHANGELOG.md, README.md, .gitignore
+- backend/ and shared/ ONLY if the design genuinely needs a server (multiplayer, shared leaderboard); a normal single-player game has none
+
+Rules:
+- List only files a working game genuinely needs: no speculative or unused files.
+- Give each file one short, concrete purpose line (what it contains, not "misc").
+- Do not write any code.
+
+Reply with exactly this and nothing else:
+<manifest>
+[{"path": "frontend/index.html", "purpose": "..."}, ...]
+</manifest>`;
+
+function projectPlanUser({ state, userMessage }) {
+  return `## Game Design Summary\n${state.summary || '(none)'}\n\n## The user's latest request\n${userMessage}\n\n## Task\nPlan the project's files now.`;
+}
+
+function projectPlanBlock(plan) {
+  return `## Project plan (from the planning step)\nWrite every one of these files, each doing what its line says. Add a file only if the game genuinely cannot work without it.\n${plan.map((f) => `- ${f.path}: ${f.purpose}`).join('\n')}`;
+}
+
+function builderContinueUser({ state, currentFiles, missing = [] }) {
+  const still = missing.length ? `\n\n## Planned files still missing (write each of these)\n${missing.map((p) => `- ${p}`).join('\n')}` : '';
+  return `## Game Design Summary\n${state.summary || '(none)'}${still}\n\n## Files you have ALREADY finished (complete and correct -- do not repeat or rewrite these)\n${qa.serializeFiles(currentFiles)}\n\n## Task\nYour previous response was cut off before the project was finished. Continue now: output the notes, then ONLY the remaining files this project still needs. If you were in the middle of a file when cut off, that file was discarded -- rewrite it completely from scratch as part of this response.`;
 }
 
 const QA = `You are the QA Agent for a browser game project. Treat nothing as done until you have verified it: a game only ships once you can find no known errors or broken functionality in it. You receive the design summary and the full project file tree (already past automated syntax/import checks). Mentally run the game as if opening frontend/index.html on a completely fresh machine (nothing installed, nothing cached) and trace through every file and how they connect, looking for real defects:
@@ -213,6 +250,8 @@ function qaUser({ state, files, warnings }) {
 }
 
 module.exports = {
+  PROJECT_PLANNER,
+  projectPlanUser,
   INTENT,
   BUILDER,
   QA,

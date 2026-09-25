@@ -45,6 +45,8 @@ async function router(req, res, url) {
 
   if (req.method === 'POST') {
     if (pathname === '/api/saved-prompts') return sessionController.createSavedPrompt(req, res);
+    const stop = pathname.match(/^\/api\/session\/([^/]+)\/stop$/);
+    if (stop) return chatController.stopChat(req, res, stop[1]);
     const m = pathname.match(/^\/api\/session\/([^/]+)\/restore$/);
     if (m) return sessionController.restoreSession(req, res, m[1]);
   }

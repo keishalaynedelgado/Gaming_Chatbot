@@ -160,17 +160,14 @@ body {
 }
 
 /* Sidebar brand -- top of the sidebar, always paired with the chat list it owns. */
-.sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 16px 16px 4px; flex: none; }
-.sidebar-brand .logo {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; font-size: 18px; line-height: 1; flex: none;
-  background: var(--sidebar-chip-bg); border-radius: var(--radius-md);
-  object-fit: contain; padding: 2px; /* the whole bird, never cropped to its head */
-}
+/* Wordmark in the ViANA / meldCX style: the product name, bold and tight,
+   with "a meldCX product" small underneath. */
+.sidebar-brand { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 18px 20px 6px; flex: none; }
 .sidebar-brand h1 {
-  font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin: 0; color: var(--sidebar-text);
+  font-size: 24px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.05; margin: 0; color: var(--sidebar-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.sidebar-brand-sub { font-size: 11.5px; font-weight: 600; color: var(--sidebar-text-secondary); letter-spacing: 0.01em; }
 
 /* ==========================================================================
    Sidebar
@@ -621,7 +618,7 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 }
 
 @media (max-width: 640px) {
-  .sidebar-brand h1 { font-size: 14.5px; }
+  .sidebar-brand h1 { font-size: 21px; }
   .msg { max-width: 96%; font-size: 14px; }
   .plan-card { max-width: 96%; }
   .welcome h2 { font-size: 26px; }
@@ -855,3 +852,13 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 }
 .welcome-saved-meta { font-size: 11.5px; color: var(--text-tertiary); margin-top: auto; }
 .welcome:has(.welcome-saved) { max-width: 760px; }
+
+/* Tracked build plan (main.js planTrack): all steps shown up front. */
+.plan-count { margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.plan-icon.plan-pending { border: 1.5px solid var(--border-strong); border-radius: 50%; width: 10px; height: 10px; margin: 1px; }
+.plan-icon.plan-skipped { color: var(--text-tertiary); font-weight: 700; }
+.plan-icon.plan-failed { color: var(--danger); font-weight: 700; }
+.plan-step.plan-pending, .plan-step.plan-skipped { color: var(--text-tertiary); }
+.plan-step.plan-active, .plan-step.plan-retry { color: var(--text); }
+.plan-step.plan-failed { color: var(--danger); }
+.plan-detail { color: var(--text-tertiary); }

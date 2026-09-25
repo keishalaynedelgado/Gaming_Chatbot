@@ -1,12 +1,17 @@
 'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const claude = require('./llm');
 const prompts = require('./prompts');
 const qa = require('./qa');
 const store = require('./store');
+const { createPlan } = require('./planRunner');
 
 const ROUTES = ['chat', 'discover', 'plan', 'build', 'improve', 'new_game'];
 const busy = new Set();
+const stopping = new Set(); // busy chats whose turn was Stopped and is unwinding
+const STOP_SETTLE_MS = 5000;
 // A chat kept alive indefinitely (the sidebar makes that easy -- a user can
 // return to and keep extending the same conversation far longer than a
 // single sitting used to) would otherwise send its ENTIRE history to the
@@ -35,6 +40,69 @@ function autoTitle(message) {
   const cut = flat.slice(0, TITLE_MAX);
   const lastSpace = cut.lastIndexOf(' ');
   return `${lastSpace > 20 ? cut.slice(0, lastSpace) : cut}…`;
+}
+
+// ---------------------------------------------------------------- Game reuse
+// The game name from a plain "make me X" request -- "Make a Flappy Bird game",
+// "Create Flappy Bird.", "Build a Flappy Bird clone", "Generate Flappy Bird",
+// "I want to make flappy bird" -- or null. Only short, bare requests count: any
+// extra wishes ("...with lasers and 3 levels") leave a longer name that won't
+// equal a finished game's title, so that request is built normally.
+const GAME_REQUEST_RE = /^(?:(?:please|pls|hey|hi|ok|okay|can you|could you|would you|let s|lets)\s+)*(?:(?:i\s+)?(?:want|would like|d like|need)\s+(?:you\s+)?(?:to\s+)?)?(?:make|create|build|generate|code|program|give)(?:\s+me)?(?:\s+(?:a|an|the))?\s+(.+?)(?:\s+please)?$/;
+function requestedGameName(message) {
+  const norm = store.normalizeText(message);
+  if (!norm || norm.length > 80) return null;
+  const name = store.normalizeGameName(norm.match(GAME_REQUEST_RE)?.[1] || '');
+  return name && !/^(?:game|new game|a game|something|anything)$/.test(name) ? name : null;
+}
+
+// The saved games list, from config/savedGames.md: under "## Saved Games",
+// each "### Name" heading is a game, its "Project: <id>" line the chat that
+// holds the finished game, and the "- ..." list items under "Triggers" its
+// trigger phrases. Everything else in the file is documentation.
+const SAVED_GAMES_FILE = path.join(__dirname, '..', 'config', 'savedGames.md');
+function parseSavedGames(markdown) {
+  const games = [];
+  let inSection = false;
+  let game = null;
+  let inTriggers = false;
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim();
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) { inSection = /^saved games$/i.test(h2[1].trim()); game = null; continue; }
+    if (!inSection) continue;
+    const h3 = line.match(/^###\s+(.+)$/);
+    if (h3) { game = { name: h3[1].trim(), session: null, triggers: [] }; games.push(game); inTriggers = false; continue; }
+    if (!game) continue;
+    const project = line.match(/^\**project\**\s*:\**\s*`?([0-9a-f-]{36})`?/i);
+    if (project) { game.session = project[1]; inTriggers = false; continue; }
+    if (/^\**triggers\**\s*:?\**$/i.test(line)) { inTriggers = true; continue; }
+    const item = line.match(/^[-*]\s+(.+)$/);
+    if (item && inTriggers) { game.triggers.push(item[1].replace(/^["`]|["`]$/g, '').trim()); continue; }
+    if (line && !item) inTriggers = false; // any other text ends the trigger list
+  }
+  return games.filter((g) => g.session);
+}
+
+// The saved game a request asks for, or null: the whole message equals one of
+// its triggers ("flappy bird", "make flappy bird"), or it's a plain
+// make/create/build request naming it ("Create Flappy Bird.", "Build a Flappy
+// Bird clone"). The file is read fresh each time, so it can be edited without
+// a restart.
+function matchSavedGame(message) {
+  let games;
+  try {
+    games = parseSavedGames(fs.readFileSync(SAVED_GAMES_FILE, 'utf8'));
+  } catch (err) {
+    console.warn(`[orchestrator] could not read ${SAVED_GAMES_FILE}: ${err.message}`);
+    return null;
+  }
+  const text = store.normalizeText(message);
+  const asked = requestedGameName(message);
+  return games.find((g) => g?.session && (
+    (g.triggers || []).some((t) => store.normalizeText(t) === text)
+    || (asked && asked === store.normalizeGameName(g.name))
+  )) || null;
 }
 
 // ---------------------------------------------------------------- Intent Agent
@@ -193,159 +261,223 @@ function formatGameDesignDoc(summary) {
   return `${body.replace(/^##\s*Game Design Summary/i, '# Game Design')}\n`;
 }
 
-async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null }) {
-  emit({ type: 'plan', op: 'start' });
+// Asks the Project Planner for the project's file list (the "Planning
+// project" step). Returns [{ path, purpose }] -- only safe, sensible paths.
+async function planProjectFiles({ state, message, signal }) {
+  const { text } = await claude.stream({
+    model: claude.MODELS.designer(),
+    system: prompts.PROJECT_PLANNER,
+    messages: [{ role: 'user', content: prompts.projectPlanUser({ state, userMessage: message }) }],
+    maxTokens: 2000,
+    timeoutMs: 120000,
+    signal,
+  });
+  const body = qa.extractTag(text, 'manifest') || text;
+  const json = body.match(/\[[\s\S]*\]/)?.[0];
+  let list;
   try {
-    const currentFiles = mode === 'improve' ? await store.readProjectFiles(id, state) : null;
-    const history = state.messages.slice(state.historyStart);
-    const todayISO = new Date().toISOString().slice(0, 10);
-    // Prototype mode is only ever chosen explicitly, and only for a fresh build --
-    // an improve request never collapses an existing project back to one file.
-    const prototype = mode === 'build' && prompts.wantsPrototype(message);
-
-    // A short, fixed micro-plan -- these labels (plus "Fixing problems..."/
-    // "Testing..." below, only when actually needed) are the whole Planning
-    // feed. Deliberately NOT a per-keyword-detected list scanned out of the
-    // code as it streams (that produced anywhere up to 9 granular steps) --
-    // a handful of fixed, honest phases, matching what's actually happening.
-    emit({ type: 'plan', op: 'step', label: mode === 'improve' ? 'Reviewing your requested changes.' : 'Reviewing the design summary.' });
-
-    emit({ type: 'agent', agent: 'builder', status: 'start' });
-    emit({ type: 'plan', op: 'step', label: prototype ? 'Writing the prototype.' : 'Writing the game in one pass.' });
-    // Once meldCX fails once during this build, every later round (continue
-    // or repair) skips straight to SCX instead of waiting out meldCX's full
-    // timeout again -- there's no reason to think it recovered mid-build.
-    let skipMeldcx = false;
-    let { notes, files: newFiles, truncated, meldcxFailed } = await runBuilder({
-      user: prompts.builderUser({ state, messages: history, userMessage: message, currentFiles, prototype, todayISO, fromSavedPrompt, promptType }),
-      emit,
-      signal,
-      skipMeldcx,
-    });
-    if (meldcxFailed) skipMeldcx = true;
-    let project = { ...currentFiles, ...newFiles };
-
-    // A full project can be more than fits in one completion, or the
-    // provider handling it can die mid-generation. Rather than give up, ask
-    // the Builder to continue from exactly what it already finished -- up to
-    // a couple of rounds -- before treating it as a real failure.
-    for (let round = 0; truncated && round < 2; round += 1) {
-      emit({ type: 'plan', op: 'step', label: 'Continuing (the project is large).' });
-      try {
-        const cont = await runBuilder({
-          user: prompts.builderContinueUser({ state, currentFiles: project }),
-          emit,
-          signal,
-          skipMeldcx,
-        });
-        project = { ...project, ...cont.files };
-        notes = cont.notes || notes;
-        truncated = cont.truncated;
-        if (cont.meldcxFailed) skipMeldcx = true;
-      } catch (err) {
-        // Same reasoning as the repair loop below: one bad continuation reply
-        // must not abort the build outright -- let the loop retry, or fall
-        // through to the clear final error once rounds are exhausted.
-        if (signal?.aborted) throw err;
-        console.warn(`[orchestrator] continuation attempt ${round + 1} failed (${err.message})`);
-      }
-    }
-    if (truncated) {
-      throw new Error('The project was too large to finish even after continuing. Try asking for fewer features or a one-file prototype.');
-    }
-
-    // Deterministic QA: syntax, completeness, broken imports. Problems go back to
-    // the Builder for repair; it only needs to resend the files it's fixing.
-    let check = qa.staticCheck(project);
-    for (let attempt = 0; check.errors.length && attempt < 2; attempt += 1) {
-      emit({ type: 'agent', agent: 'builder', status: 'progress', detail: 'fixing problems found by QA' });
-      emit({ type: 'plan', op: 'step', label: 'Fixing problems found while testing.' });
-      try {
-        const fixed = await runBuilder({
-          user: prompts.builderRepairUser({ state, currentFiles: project, errors: check.errors }),
-          emit,
-          signal,
-          skipMeldcx,
-        });
-        if (fixed.meldcxFailed) skipMeldcx = true;
-        project = { ...project, ...fixed.files };
-        notes = fixed.notes || notes;
-        check = qa.staticCheck(project);
-      } catch (err) {
-        // A single malformed repair reply (e.g. the model returned no files)
-        // must not abort the whole build -- that's exactly what the retry
-        // loop exists for. Leave `check` as-is so the loop either tries again
-        // or, once attempts are exhausted, falls through to the clear final
-        // error below instead of this one crashing the build outright.
-        if (signal?.aborted) throw err;
-        console.warn(`[orchestrator] repair attempt ${attempt + 1} failed (${err.message})`);
-      }
-    }
-    emit({ type: 'agent', agent: 'builder', status: 'done' });
-    if (check.errors.length) {
-      throw new Error(`The generated project still had errors after repair attempts: ${check.errors[0]}`);
-    }
-
-    // LLM QA review: a second full model pass re-reading everything the
-    // Builder just wrote, on top of the Builder's own required self-check
-    // (see prompts.BUILDER) and the deterministic static check + repair loop
-    // above. Real value (a genuinely fresh set of eyes can catch what the
-    // Builder missed), but it roughly doubles wall-clock time for a build
-    // that already passed static checks -- so for speed, it's opt-in
-    // (QA_REVIEW=1) rather than on by default. Set it if you want the extra
-    // pass back; the repair loop above still runs regardless.
-    let qaLine = 'Automated checks passed.';
-    if (process.env.QA_REVIEW === '1') {
-      emit({ type: 'agent', agent: 'qa', status: 'start' });
-      emit({ type: 'plan', op: 'step', label: 'Testing the game for errors.' });
-      try {
-        const { text } = await claude.stream({
-          model: claude.MODELS.qa(),
-          system: prompts.QA,
-          messages: [{ role: 'user', content: prompts.qaUser({ state, files: project, warnings: check.warnings }) }],
-          maxTokens: 32000,
-          signal,
-          timeoutMs: 240000,
-        });
-        const verdict = qa.extractTag(text, 'verdict');
-        const report = qa.extractTag(text, 'report');
-        if (verdict === 'FIXED') {
-          const { files: patchFiles } = qa.extractFiles(text);
-          const patched = { ...project, ...patchFiles };
-          if (Object.keys(patchFiles).length && qa.staticCheck(patched).errors.length === 0) {
-            project = patched;
-            qaLine = `QA found and fixed a few issues:\n${report}`;
-          } else {
-            qaLine = 'QA review finished; its patch was not usable, so the original build was kept.';
-          }
-        } else {
-          qaLine = `QA review passed. ${report}`.trim();
-        }
-      } catch (err) {
-        if (signal?.aborted) throw err;
-        qaLine = 'Automated checks passed (the extra QA review was unavailable).';
-      }
-      emit({ type: 'agent', agent: 'qa', status: 'done' });
-    }
-
-    // Keep docs/GAME_DESIGN.md authoritative, unless this really is a bare
-    // one-file prototype (no point forcing a docs/ folder onto that).
-    const isPrototypeShape = Object.keys(project).length === 1 && project['frontend/index.html'] !== undefined;
-    if (!isPrototypeShape) project['docs/GAME_DESIGN.md'] = formatGameDesignDoc(state.summary);
-
-    emit({ type: 'plan', op: 'step', label: mode === 'improve' ? 'Refreshing the playable version.' : 'Preparing the playable version.' });
-    const version = await store.saveProject(id, state, project);
-    state.phase = 'built';
-    emit({ type: 'game', url: `/games/${id}/index.html?v=${version}`, version });
-    emit({ type: 'plan', op: 'done' });
-
-    const reply = `${notes || 'Your game is ready — it should have opened in a new tab.'}\n\n**QA:** ${qaLine}`;
-    emit({ type: 'text', delta: reply });
-    return reply;
-  } catch (err) {
-    emit({ type: 'plan', op: 'error' });
-    throw err;
+    list = JSON.parse(json);
+  } catch {
+    throw new Error('The project plan was not valid JSON');
   }
+  const seen = new Set();
+  const plan = (Array.isArray(list) ? list : [])
+    .map((f) => ({ path: String(f?.path || '').trim().replace(/^\.?\//, ''), purpose: String(f?.purpose || '').trim() }))
+    .filter((f) => f.path && qa.isSafePath(f.path) && !seen.has(f.path) && seen.add(f.path));
+  if (!plan.some((f) => f.path === 'frontend/index.html')) throw new Error('The project plan is missing frontend/index.html');
+  return plan.slice(0, 60);
+}
+
+// Builds (or improves) the game as an explicit plan -- see planRunner.js.
+// Each step is a real action; independent steps run in parallel; a failed
+// step is retried on its own. The generation, continuation, repair and QA
+// logic inside the steps is unchanged from before -- only now each phase is
+// a tracked step instead of a loose progress label.
+async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null }) {
+  const plan = createPlan({
+    emit,
+    signal,
+    steps: [
+      {
+        id: 'analyze',
+        label: 'Analyzing request',
+        run: async (ctx, step) => {
+          ctx.currentFiles = mode === 'improve' ? await store.readProjectFiles(id, state) : null;
+          ctx.history = state.messages.slice(state.historyStart);
+          ctx.todayISO = new Date().toISOString().slice(0, 10);
+          // Prototype mode is only ever chosen explicitly, and only for a fresh
+          // build -- an improve request never collapses a project to one file.
+          ctx.prototype = mode === 'build' && prompts.wantsPrototype(message);
+          // Only a fresh multi-file project is complex enough to plan up front;
+          // a one-file prototype or a change to an existing game goes straight
+          // to generation.
+          ctx.complex = mode === 'build' && !ctx.prototype;
+          step.doneDetail = mode === 'improve' ? 'Change to an existing game' : ctx.prototype ? 'One-file prototype' : 'Full project build';
+        },
+      },
+      {
+        // Runs in parallel with planning/generation: it only needs the summary.
+        id: 'docs',
+        label: 'Preparing the design document',
+        deps: ['analyze'],
+        run: async (ctx) => {
+          ctx.designDoc = formatGameDesignDoc(state.summary);
+        },
+      },
+      {
+        id: 'plan',
+        label: 'Planning project',
+        deps: ['analyze'],
+        retries: 1,
+        optional: true, // without a file plan the Builder still organises the project itself
+        skip: (ctx) => (ctx.complex ? false : mode === 'improve' ? 'Not needed for a change to an existing game' : 'Not needed for a one-file prototype'),
+        run: async (ctx, step) => {
+          ctx.projectPlan = await planProjectFiles({ state, message, signal });
+          step.doneDetail = `${ctx.projectPlan.length} files planned`;
+        },
+      },
+      {
+        id: 'generate',
+        label: 'Generating files',
+        deps: ['plan'],
+        retries: 1,
+        run: async (ctx, step) => {
+          emit({ type: 'agent', agent: 'builder', status: 'start' });
+          // Once meldCX fails once during this build, every later round
+          // (continue or repair) skips straight to SCX instead of waiting out
+          // meldCX's full timeout again.
+          const first = await runBuilder({
+            user: prompts.builderUser({
+              state, messages: ctx.history, userMessage: message, currentFiles: ctx.currentFiles, prototype: ctx.prototype,
+              todayISO: ctx.todayISO, fromSavedPrompt, promptType, projectPlan: ctx.projectPlan,
+            }),
+            emit,
+            signal,
+            skipMeldcx: ctx.skipMeldcx,
+          });
+          if (first.meldcxFailed) ctx.skipMeldcx = true;
+          let { notes, truncated } = first;
+          let project = { ...ctx.currentFiles, ...first.files };
+
+          // A full project can be more than fits in one completion, or the
+          // provider can die mid-generation: continue from exactly what's
+          // finished (up to a couple of rounds) before calling it a failure.
+          // Planned files that never arrived get one targeted round too.
+          const missingPlanned = () => (ctx.projectPlan || []).map((f) => f.path).filter((p) => project[p] === undefined);
+          for (let round = 0; (truncated || (round === 0 && missingPlanned().length)) && round < 2; round += 1) {
+            const missing = missingPlanned();
+            plan.note('generate', truncated ? 'Continuing (the project is large)' : `Writing ${missing.length} planned file(s) that were missing`);
+            try {
+              const cont = await runBuilder({ user: prompts.builderContinueUser({ state, currentFiles: project, missing }), emit, signal, skipMeldcx: ctx.skipMeldcx });
+              project = { ...project, ...cont.files };
+              notes = cont.notes || notes;
+              truncated = cont.truncated;
+              if (cont.meldcxFailed) ctx.skipMeldcx = true;
+            } catch (err) {
+              // One bad continuation reply must not abort the build outright.
+              if (signal?.aborted) throw err;
+              console.warn(`[orchestrator] continuation attempt ${round + 1} failed (${err.message})`);
+            }
+          }
+          if (truncated) {
+            throw new Error('The project was too large to finish even after continuing. Try asking for fewer features or a one-file prototype.');
+          }
+          ctx.project = project;
+          ctx.notes = notes;
+          const stillMissing = missingPlanned();
+          step.doneDetail = `${Object.keys(project).length} files in the project${stillMissing.length ? ` (${stillMissing.length} planned file(s) left out)` : ''}`;
+        },
+      },
+      {
+        id: 'validate',
+        label: 'Validating output',
+        deps: ['generate'],
+        retries: 1, // a second full round of repairs, on this step only
+        run: async (ctx, step) => {
+          // Deterministic QA: syntax, completeness, broken imports. Problems go
+          // back to the Builder, which only resends the files it's fixing.
+          let check = qa.staticCheck(ctx.project);
+          for (let attempt = 0; check.errors.length && attempt < 2; attempt += 1) {
+            emit({ type: 'agent', agent: 'builder', status: 'progress', detail: 'fixing problems found by QA' });
+            plan.note('validate', `Fixing ${check.errors.length} problem(s) found while testing`);
+            try {
+              const fixed = await runBuilder({ user: prompts.builderRepairUser({ state, currentFiles: ctx.project, errors: check.errors }), emit, signal, skipMeldcx: ctx.skipMeldcx });
+              if (fixed.meldcxFailed) ctx.skipMeldcx = true;
+              ctx.project = { ...ctx.project, ...fixed.files };
+              ctx.notes = fixed.notes || ctx.notes;
+              check = qa.staticCheck(ctx.project);
+            } catch (err) {
+              // A single malformed repair reply must not abort the build --
+              // the loop (and this step's own retry) exist for exactly that.
+              if (signal?.aborted) throw err;
+              console.warn(`[orchestrator] repair attempt ${attempt + 1} failed (${err.message})`);
+            }
+          }
+          emit({ type: 'agent', agent: 'builder', status: 'done' });
+          if (check.errors.length) {
+            throw new Error(`The generated project still had errors after repair attempts: ${check.errors[0]}`);
+          }
+
+          // Optional LLM QA review (QA_REVIEW=1): a second full model pass over
+          // everything the Builder wrote. Off by default for speed; the
+          // deterministic checks + repairs above always run.
+          ctx.qaLine = 'Automated checks passed.';
+          if (process.env.QA_REVIEW === '1') {
+            emit({ type: 'agent', agent: 'qa', status: 'start' });
+            plan.note('validate', 'Testing the game for errors');
+            try {
+              const { text } = await claude.stream({
+                model: claude.MODELS.qa(),
+                system: prompts.QA,
+                messages: [{ role: 'user', content: prompts.qaUser({ state, files: ctx.project, warnings: check.warnings }) }],
+                maxTokens: 32000,
+                signal,
+                timeoutMs: 240000,
+              });
+              const verdict = qa.extractTag(text, 'verdict');
+              const report = qa.extractTag(text, 'report');
+              if (verdict === 'FIXED') {
+                const { files: patchFiles } = qa.extractFiles(text);
+                const patched = { ...ctx.project, ...patchFiles };
+                if (Object.keys(patchFiles).length && qa.staticCheck(patched).errors.length === 0) {
+                  ctx.project = patched;
+                  ctx.qaLine = `QA found and fixed a few issues:\n${report}`;
+                } else {
+                  ctx.qaLine = 'QA review finished; its patch was not usable, so the original build was kept.';
+                }
+              } else {
+                ctx.qaLine = `QA review passed. ${report}`.trim();
+              }
+            } catch (err) {
+              if (signal?.aborted) throw err;
+              ctx.qaLine = 'Automated checks passed (the extra QA review was unavailable).';
+            }
+            emit({ type: 'agent', agent: 'qa', status: 'done' });
+          }
+          step.doneDetail = 'All checks passed';
+        },
+      },
+      {
+        id: 'finalize',
+        label: 'Finalizing project',
+        deps: ['validate', 'docs'],
+        run: async (ctx) => {
+          // Keep docs/GAME_DESIGN.md authoritative, unless this really is a
+          // bare one-file prototype (no point forcing a docs/ folder onto it).
+          const isPrototypeShape = Object.keys(ctx.project).length === 1 && ctx.project['frontend/index.html'] !== undefined;
+          if (!isPrototypeShape) ctx.project['docs/GAME_DESIGN.md'] = ctx.designDoc;
+          const version = await store.saveProject(id, state, ctx.project);
+          state.phase = 'built';
+          emit({ type: 'game', url: `/games/${id}/index.html?v=${version}`, version });
+        },
+      },
+    ],
+  });
+
+  const ctx = await plan.run({ skipMeldcx: false });
+  const reply = `${ctx.notes || 'Your game is ready — it should have opened in a new tab.'}\n\n**QA:** ${ctx.qaLine}`;
+  emit({ type: 'text', delta: reply });
+  return reply;
 }
 
 // ------------------------------------------------------------------ Entry point
@@ -353,13 +485,21 @@ async function buildGame({ id, state, message, mode, emit, signal, fromSavedProm
 // Saved prompts). With it, the request is treated as final: no intent check,
 // no discovery questions, no confirmation -- straight to the Builder, with the
 // exact same summary the game was originally built from.
-async function handleChat({ id, message, spec, promptType = null, emit, signal }) {
+async function handleChat({ id, message, spec, promptType = null, loadGame = null, savedPromptId = null, emit, signal }) {
+  // A turn that was just Stopped may still be unwinding (its cancelled
+  // request settling, the message being kept): wait briefly for it, so a
+  // message sent right after Stop isn't refused. Never waits on a live turn.
+  for (let waited = 0; busy.has(id) && stopping.has(id) && waited < STOP_SETTLE_MS; waited += 50) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
   if (busy.has(id)) {
     const err = new Error('Still working on your previous message. Please wait a moment.');
     err.status = 409;
     throw err;
   }
   busy.add(id);
+  const onStop = () => stopping.add(id);
+  signal?.addEventListener('abort', onStop);
   // The chat exists -- with this message in it -- the moment the message
   // arrives, before any AI call: a slow, failed or timed-out reply can never
   // lose it, and the chat can be opened from the sidebar while the reply is
@@ -385,6 +525,58 @@ async function handleChat({ id, message, spec, promptType = null, emit, signal }
   try {
     state = await store.get(id);
     let freshStart = false;
+
+    // A plain request for a game that's already been built ("Make a Flappy
+    // Bird game", "Build a Flappy Bird clone") reuses that finished game the
+    // same way -- matched on the exact game name, before any intent check or
+    // planning, and only in a chat that doesn't have a game yet.
+    let reuseFrom = loadGame;
+    let reusedBy = 'saved prompt';
+    let reuseName = null;
+    if (!reuseFrom && !spec) {
+      const saved = matchSavedGame(message);
+      if (saved && saved.session !== id) {
+        reuseFrom = saved.session;
+        reuseName = saved.name;
+        reusedBy = 'request';
+      }
+    }
+
+    // A finished game to reuse: open a copy of it at once -- no planning,
+    // generation, repair or AI calls. It's a copy (in this chat), so changes
+    // asked for here never touch the original. If the game is gone after all,
+    // this falls through to building it normally.
+    if (reuseFrom && reuseFrom !== id) {
+      const source = await store.get(reuseFrom);
+      const files = source.hasGame ? await store.readProjectFiles(reuseFrom, source) : null;
+      if (files && Object.keys(files).length) {
+        if (state.hasGame || state.messages.length) {
+          activeId = randomUUID();
+          state = await store.get(activeId);
+          emit({ type: 'session', id: activeId });
+        }
+        const name = reuseName || (source.summary || '').match(/\*\*Title:?\*\*:?\s*([^\n]+)/)?.[1].replace(/\(default[^)]*\)|[*_]/g, '').trim() || 'your game';
+        if (!state.title) {
+          state.title = name;
+          state.titleAuto = true;
+          emit({ type: 'title', title: state.title, titleAuto: true });
+        }
+        await saveEarly();
+        state.summary = source.summary;
+        const version = await store.saveProject(activeId, state, files);
+        state.phase = 'built';
+        // Not opened automatically: the user starts it with "Open game in new tab".
+        emit({ type: 'game', url: `/games/${activeId}/index.html?v=${version}`, version, autoOpen: false });
+        const reply = reusedBy === 'request'
+          ? `**${name}** has already been built, so I've loaded the finished version instead of generating it again. Click **Open game in new tab** to play. Ask for any changes and I'll update this copy.`
+          : `Here's **${name}**, loaded instantly from your saved prompt. Click **Open game in new tab** to play. Ask for any changes and I'll update this copy.`;
+        emit({ type: 'text', delta: reply });
+        state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });
+        recorded = true;
+        await store.save(activeId, state);
+        return;
+      }
+    }
 
     let route;
     if (spec) {
@@ -445,6 +637,12 @@ async function handleChat({ id, message, spec, promptType = null, emit, signal }
     if (route === 'build') {
       const request = state.messages.slice(state.historyStart).find((m) => m.role === 'user')?.content || message;
       emit({ type: 'completed_prompt', title: state.title || autoTitle(request), request, spec: state.summary });
+      // Built from one of the user's saved prompts: remember this game, so
+      // picking that prompt again loads it instantly.
+      if (savedPromptId) {
+        await store.linkSavedPromptGame(savedPromptId, activeId)
+          .catch((e) => console.error('[orchestrator] could not link the saved prompt to its game:', e.message));
+      }
     }
   } catch (err) {
     // Failed, timed out or stopped: the chat keeps the user's message (it was
@@ -457,6 +655,8 @@ async function handleChat({ id, message, spec, promptType = null, emit, signal }
     throw err;
   } finally {
     busy.delete(id);
+    stopping.delete(id);
+    signal?.removeEventListener('abort', onStop);
   }
 }
 

@@ -137,7 +137,7 @@ export function createMascot({ placement = 'corner', tips = [] } = {}) {
   el.className = `mascot mascot--${placement}`;
   el.innerHTML = `
     <div class="mascot-float"><div class="mascot-lean">
-      <button type="button" class="mascot-hit" aria-label="Vi, the Game Creator owl. Click to change pose.">
+      <button type="button" class="mascot-hit" aria-label="Vi, the Ask Vi Games owl. Click to change pose.">
         <span class="mascot-art">
           <img class="mascot-img" alt="" draggable="false">
           <span class="mascot-lids" aria-hidden="true"></span>
