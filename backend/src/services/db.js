@@ -100,6 +100,9 @@ async function migrate() {
     ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'any';
     ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS run_auto BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS show_on_home BOOLEAN NOT NULL DEFAULT FALSE;
+    -- The chat whose finished game this prompt produced: picking the prompt
+    -- again loads that game instantly instead of rebuilding it.
+    ALTER TABLE saved_prompts ADD COLUMN IF NOT EXISTS game_session_id TEXT;
     -- A built game the user doesn't want listed under Saved prompts; the chat
     -- and the game itself are untouched.
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS hide_from_saved BOOLEAN NOT NULL DEFAULT FALSE;

@@ -372,6 +372,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
 
   // ---- Delete (soft) / Restore ----
   async function deleteChat(id) {
+    if (pinned.has(id)) return; // pinned chats can't be deleted -- unpin first
     const removed = store.chats.find((c) => c.id === id);
     const removedIndex = store.chats.indexOf(removed);
     const wasActive = store.activeChatId === id;
@@ -527,7 +528,9 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
       if (confirmDelete(chat)) deleteChat(chat.id);
     });
 
-    actions.append(pinBtn, renameBtn, deleteBtn);
+    // Pinned chats are protected: no delete until they're unpinned.
+    actions.append(pinBtn, renameBtn);
+    if (!isPinned) actions.append(deleteBtn);
     li.append(main, actions);
     return li;
   }

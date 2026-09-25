@@ -260,6 +260,7 @@ async function listBuiltGames() {
     request: r.request,
     spec: finalPrompt(r.summary),
     savedAt: r.updated_at.toISOString(),
+    gameSession: r.id, // the finished game itself: opening this prompt loads it instantly
   }));
 }
 
@@ -287,8 +288,19 @@ async function createSavedPrompt({ name, prompt, type = 'any', runAuto = false, 
 // Everything in the sidebar's Saved prompts: the user's own saved prompts
 // plus every game already built, newest first, one entry per distinct text.
 async function listSavedPrompts() {
-  const { rows } = await db.query(`SELECT ${SAVED_PROMPT_COLS} FROM saved_prompts ORDER BY created_at DESC LIMIT 200`);
-  const all = [...rows.map(customPromptRow), ...(await listBuiltGames())];
+  // game_id: the prompt's linked finished game, if that chat still exists and has one.
+  const { rows } = await db.query(
+    `SELECT ${SAVED_PROMPT_COLS.split(', ').map((c) => `sp.${c}`).join(', ')}, g.id AS game_id
+     FROM saved_prompts sp
+     LEFT JOIN sessions g ON g.id = sp.game_session_id AND g.has_game AND g.deleted_at IS NULL
+     ORDER BY sp.created_at DESC LIMIT 200`,
+  );
+  const built = await listBuiltGames();
+  // A saved prompt with exactly the text of an already-built game's design is
+  // that game: it opens it instantly too (and is listed once).
+  const builtBySpec = new Map(built.map((b) => [b.spec, b.gameSession]));
+  const custom = rows.map(customPromptRow).map((p) => (p.gameSession ? p : { ...p, gameSession: builtBySpec.get(p.spec) || null }));
+  const all = [...custom, ...built];
   const seen = new Set();
   return all
     .filter((p) => (seen.has(p.spec) ? false : seen.add(p.spec)))
@@ -306,7 +318,27 @@ function customPromptRow(r) {
     showOnHome: r.show_on_home,
     savedAt: r.created_at.toISOString(),
     custom: true,
+    gameSession: r.game_id || null,
   };
+}
+
+// ------------------------------------------------------------ Game reuse
+// Case- and punctuation-insensitive text, with "&" read as "and" -- so
+// "Collect & Dodge!" and "collect and dodge" compare equal.
+function normalizeText(s) {
+  return String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// A game name for matching: normalized, with a trailing "game"/"clone"
+// dropped ("Flappy Bird clone" -> "flappy bird").
+function normalizeGameName(s) {
+  return normalizeText(s).replace(/(?:\s+(?:game|clone|remake))+$/, '');
+}
+
+// Links a saved prompt to the chat whose build from it just finished, so the
+// next time it's picked, that game loads instantly.
+async function linkSavedPromptGame(promptId, sessionId) {
+  await db.query('UPDATE saved_prompts SET game_session_id = $2 WHERE id = $1', [promptId, sessionId]);
 }
 
 // "**Title**: X" if the prompt has one, else its first line, shortened.
@@ -355,6 +387,9 @@ module.exports = {
   listBuiltGames,
   listSavedPrompts,
   createSavedPrompt,
+  linkSavedPromptGame,
+  normalizeText,
+  normalizeGameName,
   get,
   save,
   saveProject,
