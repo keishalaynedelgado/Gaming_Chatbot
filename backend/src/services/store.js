@@ -198,7 +198,7 @@ async function readFrontendFile(id, state, subPath) {
 // instead of the normal list; a session is never in both.
 async function listSessions({ deleted = false } = {}) {
   const { rows } = await db.query(
-    `SELECT s.id, s.title, s.title_auto, s.created_at, s.updated_at, s.has_game, s.game_version, s.deleted_at,
+    `SELECT s.id, s.title, s.title_auto, s.created_at, s.updated_at, s.has_game, s.game_version, s.deleted_at, s.pinned_at,
             (SELECT content FROM messages m WHERE m.session_id = s.id ORDER BY m.seq DESC LIMIT 1) AS last_message
      FROM sessions s
      WHERE s.deleted_at IS ${deleted ? 'NOT NULL' : 'NULL'}
@@ -214,7 +214,21 @@ async function listSessions({ deleted = false } = {}) {
     gameUrl: r.has_game ? `/games/${r.id}/index.html?v=${r.game_version}` : null,
     lastMessage: r.last_message,
     deletedAt: r.deleted_at ? r.deleted_at.toISOString() : null,
+    pinnedAt: r.pinned_at ? r.pinned_at.toISOString() : null,
   }));
+}
+
+// Pins or unpins a (non-deleted) chat. Pinning an already-pinned chat keeps
+// its original pin time, so repeats never duplicate or reorder it. Returns
+// the pin time (null when unpinned), or undefined if there's no such chat.
+async function setPinned(id, pinned) {
+  const { rows } = await db.query(
+    `UPDATE sessions SET pinned_at = CASE WHEN $2 THEN COALESCE(pinned_at, now()) ELSE NULL END
+     WHERE id = $1 AND deleted_at IS NULL RETURNING pinned_at`,
+    [id, pinned],
+  );
+  if (!rows.length) return undefined;
+  return rows[0].pinned_at ? rows[0].pinned_at.toISOString() : null;
 }
 
 const GAME_TITLE_RE = /\*\*Title:?\*\*:?\s*(.+)/; // the Planner's "**Title**: X" line
@@ -384,11 +398,13 @@ async function restoreSession(id) {
 
 module.exports = {
   isValidId,
+  setPinned,
   listBuiltGames,
   listSavedPrompts,
   createSavedPrompt,
   linkSavedPromptGame,
   normalizeText,
+  finalPrompt,
   normalizeGameName,
   get,
   save,

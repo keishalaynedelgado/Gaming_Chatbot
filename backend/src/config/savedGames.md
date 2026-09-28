@@ -80,6 +80,23 @@ Triggers
 
 Action: Return the existing Nikki Run project immediately.
 
+### Chess
+
+Project: f127f1a3-3fe2-49fc-8e3b-1844562c38a2
+
+Triggers
+
+- create chess
+- make chess
+- chess
+- build chess
+- create chess vs computer
+- make chess vs computer
+- chess vs computer
+- build chess vs computer
+
+Action: Return the existing Chess project immediately.
+
 ## Priority
 
 1. Check whether the user's request matches a saved game.

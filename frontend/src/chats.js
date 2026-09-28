@@ -17,29 +17,26 @@
 const STORAGE_KEY = 'gc_chats';
 const LEGACY_SESSION_KEY = 'gc_session'; // pre-sidebar single-session id
 const COLLAPSED_KEY = 'gc_sidebar_collapsed';
-const PINNED_KEY = 'gc_pinned_chats'; // client-only convenience, like COLLAPSED_KEY -- never sent to the server
+const LEGACY_PINNED_KEY = 'gc_pinned_chats'; // pins from before they were stored in the database -- migrated once
 const CURRENT_VERSION = 2;
 const PREVIEW_MAX = 84;
 const MOBILE_BREAKPOINT = 860;
 
 // ---------------------------------------------------------------- Pinning
-// Pinning is a personal UI convenience (like the theme or collapsed-state
-// choices), not chat data -- so it lives only in localStorage, as a plain set
-// of ids, never round-tripped through the database.
-function loadPinnedIds() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(PINNED_KEY) || '[]');
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
+// Pins live in the database (each chat's pinnedAt -- the time it was pinned,
+// which also keeps pinned chats in pin order), so they survive restarts,
+// cleared browsers, Incognito windows and other devices. The localStorage
+// chat cache only mirrors them for an instant first paint.
+const isPinned = (chat) => Boolean(chat?.pinnedAt);
 
-function savePinnedIds(set) {
+// Pins saved by an earlier version only in this browser: read once, uploaded
+// to the database in their original order, then removed.
+function readLegacyPins() {
   try {
-    localStorage.setItem(PINNED_KEY, JSON.stringify([...set]));
+    const arr = JSON.parse(localStorage.getItem(LEGACY_PINNED_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
   } catch {
-    /* pin state just won't survive a reload this time */
+    return [];
   }
 }
 
@@ -229,6 +226,16 @@ async function apiDelete(id) {
   if (!res.ok) throw new Error(`Could not delete chat (${res.status})`);
 }
 
+async function apiSetPinned(id, pinned) {
+  const res = await fetchWithRetry(`/api/session/${id}/pin`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pinned }),
+  });
+  if (!res.ok) throw new Error(`Could not ${pinned ? 'pin' : 'unpin'} chat (${res.status})`);
+  return (await res.json()).pinnedAt;
+}
+
 async function apiRestore(id) {
   const res = await fetchWithRetry(`/api/session/${id}/restore`, { method: 'POST' });
   if (!res.ok) throw new Error(`Could not restore chat (${res.status})`);
@@ -260,15 +267,50 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
   let switching = false; // guards against overlapping selects while one is loading
   let trashView = false; // showing deleted chats (for restore) instead of the normal list
   let trashed = []; // last-loaded deleted-chats list, only populated while trashView is open
-  let pinned = loadPinnedIds();
   let prompts = loadPrompts();
   let tab = 'chats'; // 'chats' | 'prompts'
   try { if (localStorage.getItem(TAB_KEY) === 'prompts') tab = 'prompts'; } catch { /* default tab */ }
 
-  function togglePin(id) {
-    if (pinned.has(id)) pinned.delete(id);
-    else pinned.add(id);
-    savePinnedIds(pinned);
+  // Shown at once, saved to the database right away; if saving fails the pin
+  // is put back the way it was, so the UI never disagrees with the database.
+  async function togglePin(id) {
+    const chat = store.chats.find((c) => c.id === id);
+    if (!chat) return;
+    const before = chat.pinnedAt || null;
+    const pin = !before;
+    chat.pinnedAt = pin ? new Date().toISOString() : null;
+    save();
+    render();
+    try {
+      chat.pinnedAt = await apiSetPinned(id, pin);
+      save();
+      render();
+    } catch (err) {
+      chat.pinnedAt = before;
+      save();
+      render();
+      showError(`${err.message}. Please try again.`);
+    }
+  }
+
+  // One-time upload of this browser's old local-only pins, in their order.
+  async function migrateLegacyPins() {
+    const legacy = readLegacyPins();
+    if (!legacy.length) return;
+    let allSaved = true;
+    for (const id of legacy) {
+      const chat = store.chats.find((c) => c.id === id);
+      if (!chat || chat.pinnedAt) continue;
+      try {
+        chat.pinnedAt = await apiSetPinned(id, true);
+      } catch {
+        allSaved = false;
+      }
+    }
+    if (allSaved) {
+      try { localStorage.removeItem(LEGACY_PINNED_KEY); } catch { /* retried next load */ }
+    }
+    save();
     render();
   }
 
@@ -307,6 +349,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
       if (store.activeChatId && !sessions.some((s) => s.id === store.activeChatId)) store.activeChatId = null;
       save();
       render();
+      await migrateLegacyPins();
     } catch (err) {
       // The database is unreachable right now -- keep showing whatever was
       // last known (the localStorage cache, or the previous successful
@@ -372,7 +415,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
 
   // ---- Delete (soft) / Restore ----
   async function deleteChat(id) {
-    if (pinned.has(id)) return; // pinned chats can't be deleted -- unpin first
+    if (isPinned(store.chats.find((c) => c.id === id))) return; // pinned chats can't be deleted -- unpin first
     const removed = store.chats.find((c) => c.id === id);
     const removedIndex = store.chats.indexOf(removed);
     const wasActive = store.activeChatId === id;
@@ -500,12 +543,12 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     const actions = document.createElement('span');
     actions.className = 'chat-item-actions';
 
-    const isPinned = pinned.has(chat.id);
+    const pinnedChat = isPinned(chat);
     const pinBtn = document.createElement('button');
     pinBtn.type = 'button';
-    pinBtn.className = `chat-item-action pin-btn${isPinned ? ' pinned' : ''}`;
-    pinBtn.title = isPinned ? 'Unpin' : 'Pin';
-    pinBtn.setAttribute('aria-label', isPinned ? 'Unpin chat' : 'Pin chat');
+    pinBtn.className = `chat-item-action pin-btn${pinnedChat ? ' pinned' : ''}`;
+    pinBtn.title = pinnedChat ? 'Unpin' : 'Pin';
+    pinBtn.setAttribute('aria-label', pinnedChat ? 'Unpin chat' : 'Pin chat');
     pinBtn.textContent = '📌';
     pinBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePin(chat.id); });
 
@@ -530,7 +573,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
 
     // Pinned chats are protected: no delete until they're unpinned.
     actions.append(pinBtn, renameBtn);
-    if (!isPinned) actions.append(deleteBtn);
+    if (!pinnedChat) actions.append(deleteBtn);
     li.append(main, actions);
     return li;
   }
@@ -674,13 +717,14 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
 
     // Pinned chats always surface first, regardless of how recent they are;
     // everything else buckets by recency, same idea as most chat apps' history.
-    const rest = chats.filter((c) => !pinned.has(c.id));
+    const rest = chats.filter((c) => !isPinned(c));
     const now = new Date();
     const today = rest.filter((c) => calendarDaysAgo(c.updatedAt, now) <= 0);
     const last7 = rest.filter((c) => { const d = calendarDaysAgo(c.updatedAt, now); return d > 0 && d <= 7; });
     const older = rest.filter((c) => calendarDaysAgo(c.updatedAt, now) > 7);
 
-    appendGroup('Pinned', chats.filter((c) => pinned.has(c.id)), active);
+    // Pinned in the order they were pinned (first pinned stays on top).
+    appendGroup('Pinned', chats.filter(isPinned).sort((a, b) => (a.pinnedAt < b.pinnedAt ? -1 : 1)), active);
     appendGroup('Today', today, active);
     appendGroup('Previous 7 days', last7, active);
     appendGroup('Older', older, active);

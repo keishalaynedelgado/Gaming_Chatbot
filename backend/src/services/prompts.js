@@ -54,11 +54,23 @@ function contextBlock(state) {
   return parts.length ? `\n\n${parts.join('\n\n')}` : '';
 }
 
-function conversationSystem(kind, state, { freshStart = false } = {}) {
+// The guided demo flow (see orchestrator GUIDED_OPENING): the user has just
+// answered three setup questions, and the game is built right after this
+// summary -- so no questions, no confirmation, defaults for every gap.
+const GUIDED_PLAN = `
+
+GUIDED DEMO MODE -- these instructions override the rules above. The user has just answered three quick setup questions (genre or vibe, what the player is trying to do, and desktop/mobile/both). Write the Game Design Summary NOW:
+- Never ask a question and never refuse for missing details: fill every gap with a sensible, conventional choice for this kind of game, and do not mark those choices as defaults.
+- Start with the exact heading "## Game Design Summary", then use these bold labels, one line each: **Title**, **Genre**, **Core objective**, **Main gameplay loop**, **Controls**, **Target platform**, **Visual style**, **Win condition**, **Lose condition**, **Key mechanics**.
+- Do NOT ask the user to confirm: the game is built immediately after this summary. End with one short sentence saying you're building it now.`;
+
+function conversationSystem(kind, state, { freshStart = false, guided = false } = {}) {
   const task = { discover: DESIGNER, plan: PLANNER, chat: CHAT_TASK }[kind] || CHAT_TASK;
   let extra = '';
   if (kind === 'discover' && state.hasGame) {
     extra = '\n\nA game already exists and the user wants to change it, but the request is unclear. Ask what exactly they want changed; do not assume.';
+  } else if (kind === 'plan' && guided) {
+    extra = GUIDED_PLAN;
   } else if (kind === 'discover' && freshStart) {
     extra = "\n\nThe user just asked for a different, new game, so this is now a brand new chat, separate from whatever they were working on before. Start your reply with one short sentence making that clear (e.g. \"Starting a new chat for this one!\"), then continue as normal.";
   }
