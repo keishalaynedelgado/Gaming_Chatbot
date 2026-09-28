@@ -520,6 +520,11 @@ async function send(text, opts = {}) {
         turn.plan = null;
       }
       sidebar.updateChat(turn.session, { messages: turn.messages, hasGame: false, gameUrl: null }, { activate: wasShown });
+    } else if (evt.type === 'text_replace') {
+      // The server withdrew what it had streamed (a reply that turned into
+      // code): start this reply over with the given text.
+      turn.raw = evt.text || '';
+      if (shown() && turn.bubble) turn.bubble.innerHTML = renderMarkdown(turn.raw);
     } else if (evt.type === 'saved') {
       turn.saved = true; // the server has this turn -- it survives a dropped connection
     } else if (evt.type === 'completed_prompt') {
