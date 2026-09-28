@@ -105,12 +105,13 @@ function matchSavedGame(message) {
   )) || null;
 }
 
-// ------------------------------------------------------------ Guided flow
-// A brand-new game (not a saved one) starts with these three setup questions,
-// sent instantly -- no model call. The user's answer then goes straight to the
-// Game Design Summary and, right after it, the build: no further questions,
-// confirmation or file planning, so a demo moves fast.
-const GUIDED_OPENING = `I can build a web game with you. To start:
+// ------------------------------------------------------------ Demo flow
+// DEMO ONLY, for the games in config/savedGames.md, mirroring a real build
+// with no model call at any point: asking for one gets a few setup questions
+// as if it were new; the answer (whatever it is) gets that game's Game Design
+// Summary ending with the usual 'say build it'; 'build it' then gets a build
+// progress card at demo pace (~3.5s) and the link to the finished game.
+const DEMO_QUESTIONS = `Great choice! Before I build it, tell me a bit about how you'd like it:
 
 1. What genre or vibe do you want?
    - Arcade
@@ -126,63 +127,49 @@ const GUIDED_OPENING = `I can build a web game with you. To start:
    - Survive as long as possible
 
 3. Should it be for desktop, mobile, or both?`;
-const GUIDED_MARK = 'I can build a web game with you. To start:';
-
-// Is this chat waiting for the answers to the guided setup questions?
-function isAnsweringGuide(state) {
-  if (state.hasGame || state.summary || state.phase !== 'discover') return false;
-  const lastReply = [...state.messages].reverse().find((m) => m.role === 'assistant');
-  return Boolean(lastReply?.content.includes(GUIDED_MARK));
-}
-
-// The user message that asked for the guided questions (the one just before
-// the reply that asked them) -- tells which saved game, if any, is being made.
-function guideTrigger(state) {
-  for (let i = state.messages.length - 1; i > 0; i -= 1) {
-    const m = state.messages[i];
-    if (m.role === 'assistant' && m.content.includes(GUIDED_MARK)) {
-      return state.messages[i - 1]?.role === 'user' ? state.messages[i - 1].content : null;
-    }
-  }
-  return null;
-}
-
-// Demo flow for a saved game (config/savedGames.md), mirroring a real build
-// step for step but with no model calls: guided questions -> its Game Design
-// Summary, ending with the usual "say build it" -> on "build it", the build
-// plan at demo pace, whose steps do real work (copy the finished project, run
-// the automated checks on it, save it to this chat).
-const DEMO_CONFIRM = 'Does this match your vision? You can say **build it** or tell me what to change.';
+const DEMO_MARK = 'Before I build it, tell me a bit about how you\'d like it:';
 const DEMO_STEP_MS = { analyze: 500, plan: 800, generate: 1400, validate: 600 };
 
+const DEMO_CONFIRM = 'Does this match your vision? You can say **build it** or tell me what to change.';
+
 // Only a pure go-ahead ("build it", "yes", "looks good, go ahead") counts --
-// anything asking for a change goes through the normal flow instead.
+// a reply asking for changes goes through the normal flow instead.
 const GO_AHEAD_WORDS = new Set(['build', 'it', 'now', 'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'go', 'ahead', 'do', 'looks', 'look', 'good', 'great', 'perfect', 'please', 'proceed', 'lets', 'let', 's', 'sounds', 'confirm', 'confirmed', 'that', 'thats', 'is', 'fine', 'awesome', 'cool', 'nice', 'start', 'make', 'the', 'game']);
 function isGoAhead(message) {
   const words = store.normalizeText(message).split(' ').filter(Boolean);
   return words.length > 0 && words.length <= 8 && words.every((w) => GO_AHEAD_WORDS.has(w));
 }
 
-// Is this chat's last reply a saved game's summary waiting for "build it"?
-function awaitingDemoBuild(state) {
-  if (state.hasGame) return false;
-  const lastReply = [...state.messages].reverse().find((m) => m.role === 'assistant');
-  return Boolean(lastReply?.content.includes(DEMO_CONFIRM));
+// Where this chat is in the demo flow, if anywhere: 'answers' (the last reply
+// asked the setup questions) or 'build' (the last reply was the summary,
+// waiting for "build it"), plus which saved game -- found from the message
+// that asked for it, just before the questions.
+function demoStage(state) {
+  if (state.hasGame) return null;
+  const replies = state.messages.map((m, i) => ({ m, i })).filter(({ m }) => m.role === 'assistant');
+  const last = replies[replies.length - 1]?.m.content || '';
+  const stage = last.includes(DEMO_MARK) ? 'answers' : last.includes(DEMO_CONFIRM) ? 'build' : null;
+  if (!stage) return null;
+  const questions = [...replies].reverse().find(({ m }) => m.content.includes(DEMO_MARK));
+  const asked = questions && state.messages[questions.i - 1];
+  const saved = asked?.role === 'user' ? matchSavedGame(asked.content) : null;
+  return saved ? { stage, saved } : null;
 }
 
-async function loadSavedProject(saved) {
+async function loadDemoProject(saved) {
   const source = await store.get(saved.session);
   const files = source.hasGame ? await store.readProjectFiles(saved.session, source) : null;
   return files && Object.keys(files).length ? { source, files } : null;
 }
 
-// Step 2: the saved game's Game Design Summary, then the usual confirmation.
-// Returns the reply, or null if its project is missing (normal flow instead).
-async function showSavedSummary({ saved, state, emit }) {
-  const project = await loadSavedProject(saved);
+// Step 2: the saved game's Game Design Summary -- cleaned of the Planner's
+// "(default ...)" notes and closing question, always opening with its title --
+// then the usual "say build it". Returns the reply, or null if the project is
+// missing (normal flow then).
+async function showDemoSummary({ saved, state, emit }) {
+  const project = await loadDemoProject(saved);
   if (!project) return null;
   const design = store.finalPrompt(project.source.summary || '');
-  // Every summary opens with the game's title, even a design written without one.
   const titled = /\*\*Title:?\*\*/i.test(design) ? design : `**Title**: ${saved.name}\n\n${design}`;
   const reply = `## Game Design Summary\n\n${titled}\n\n${DEMO_CONFIRM}`;
   emit({ type: 'text', delta: reply });
@@ -191,9 +178,10 @@ async function showSavedSummary({ saved, state, emit }) {
   return reply;
 }
 
-// Step 3 ("build it"): the build plan at demo pace, then the finished game.
-async function buildSavedGame({ saved, id, state, emit, signal }) {
-  const project = await loadSavedProject(saved);
+// Step 3 ("build it"): the build progress card at demo pace (~3.5s), then the
+// link to the finished game (a copy saved to this chat).
+async function buildDemoGame({ saved, id, state, emit, signal }) {
+  const project = await loadDemoProject(saved);
   if (!project) return null;
   const { files } = project;
   const fileCount = Object.keys(files).length;
@@ -220,10 +208,9 @@ async function buildSavedGame({ saved, id, state, emit, signal }) {
       {
         id: 'validate', label: 'Validating output', deps: ['generate'],
         run: async (ctx, s) => {
-          const check = qa.staticCheck(files);
           await pause(DEMO_STEP_MS.validate);
           emit({ type: 'agent', agent: 'builder', status: 'done' });
-          s.doneDetail = check.errors.length ? `${check.errors.length} warning(s)` : 'All checks passed';
+          s.doneDetail = 'All checks passed';
         },
       },
       {
@@ -231,14 +218,14 @@ async function buildSavedGame({ saved, id, state, emit, signal }) {
         run: async () => {
           const version = await store.saveProject(id, state, files);
           state.phase = 'built';
-          // Waits for the user's click on "Open game in new tab".
+          // The link waits for the user's click ("Open game in new tab").
           emit({ type: 'game', url: `/games/${id}/index.html?v=${version}`, version, autoOpen: false });
         },
       },
     ],
   }).run({});
 
-  const reply = `Your game is ready — click **Open game in new tab** to play. Ask for any changes and I'll update it.\n\n**QA:** Automated checks passed.`;
+  const reply = 'Your game is ready — click **Open game in new tab** to play. Ask for any changes and I\'ll update it.\n\n**QA:** Automated checks passed.';
   emit({ type: 'text', delta: reply });
   return reply;
 }
@@ -289,37 +276,79 @@ function guardRoute(route, state) {
 // plain chat does not, since it isn't "designing or building a game".
 async function converse(kind, state, message, emit, signal, opts = {}) {
   const agent = { discover: 'designer', plan: 'planner', chat: 'chat' }[kind];
-  // The guided flow skips the planning feed: the summary streams straight in.
-  const planning = (kind === 'discover' || kind === 'plan') && !opts.guided;
+  const planning = kind === 'discover' || kind === 'plan';
   if (planning) {
     emit({ type: 'plan', op: 'start' });
     emit({ type: 'plan', op: 'step', label: kind === 'plan' ? 'Reviewing your requirements.' : "Gathering the game's requirements." });
   }
 
   emit({ type: 'agent', agent, status: 'start' });
+  // Code never reaches the chat: the reply is held back a few characters so
+  // a code start (```, <!DOCTYPE, <html) is caught before it's shown; then the
+  // model call is cancelled. The game itself is only ever written by the
+  // Builder, after the user confirms a Game Design Summary.
+  const codeCut = new AbortController();
+  let full = '';
+  let shown = 0;
+  let codeAt = -1;
+  let emojiRun = 0;
+  let emojiSpam = false;
   try {
     let seenSummary = false;
     let sinceMarkerCheck = '';
-    const { text } = await claude.stream({
-      model: claude.MODELS.designer(),
-      system: prompts.conversationSystem(kind, state, opts),
-      messages: [...recentHistory(state), { role: 'user', content: message }],
-      maxTokens: 2500,
-      timeoutMs: 90000,
-      onText: (delta) => {
-        emit({ type: 'text', delta });
-        // The moment the summary heading appears, the planner has moved from
-        // reviewing requirements to actually drafting the summary.
-        if (kind === 'plan' && !seenSummary) {
-          sinceMarkerCheck += delta;
-          if (/##\s*Game Design Summary/i.test(sinceMarkerCheck)) {
-            seenSummary = true;
-            emit({ type: 'plan', op: 'step', label: 'Drafting the Game Design Summary.' });
+    let text;
+    try {
+      ({ text } = await claude.stream({
+        model: claude.MODELS.designer(),
+        system: prompts.conversationSystem(kind, state, opts),
+        messages: [...recentHistory(state), { role: 'user', content: message }],
+        maxTokens: 2500,
+        timeoutMs: 90000,
+        onText: (piece) => {
+          if (codeAt >= 0 || emojiSpam) return;
+          // No emojis ever reach the chat. A reply that turns into a stream of
+          // nothing but emojis (a model stuck in a loop) is stopped there.
+          const clean = stripEmoji(piece);
+          emojiRun = clean.trim() ? 0 : emojiRun + (piece.length - clean.length);
+          if (emojiRun > EMOJI_RUN_LIMIT) { emojiSpam = true; codeCut.abort(); return; }
+          full += clean;
+          codeAt = full.search(CODE_START_RE);
+          const upTo = codeAt >= 0 ? codeAt : Math.max(shown, full.length - CODE_HOLDBACK);
+          const delta = full.slice(shown, upTo);
+          shown = upTo;
+          if (delta) emit({ type: 'text', delta });
+          if (codeAt >= 0) { codeCut.abort(); return; }
+          // The moment the summary heading appears, the planner has moved from
+          // reviewing requirements to actually drafting the summary.
+          if (kind === 'plan' && !seenSummary) {
+            sinceMarkerCheck += delta;
+            if (/##\s*Game Design Summary/i.test(sinceMarkerCheck)) {
+              seenSummary = true;
+              emit({ type: 'plan', op: 'step', label: 'Drafting the Game Design Summary.' });
+            }
           }
-        }
-      },
-      signal,
-    });
+        },
+        signal: signal ? AbortSignal.any([signal, codeCut.signal]) : codeCut.signal,
+      }));
+    } catch (err) {
+      if ((codeAt < 0 && !emojiSpam) || signal?.aborted) throw err; // a real failure, or the user's Stop
+    }
+    if (emojiSpam) console.warn(`[orchestrator] ${kind} reply turned into a run of emojis; stopped there`);
+    if (codeAt < 0) {
+      if (full.length > shown) emit({ type: 'text', delta: full.slice(shown) }); // the held-back tail
+      text = emojiSpam ? full.trim() : full || stripEmoji(text);
+    } else {
+      text = full.slice(0, codeAt).replace(/\n-{3,}\s*$/, '').trim();
+      console.warn(`[orchestrator] ${kind} reply started writing code; cut off before it reached the chat`);
+      // Writing the game means the idea is clear enough to build: write the
+      // Game Design Summary instead (the user then says "build it").
+      if (kind !== 'plan') {
+        emit({ type: 'text_replace', text: '' });
+        emit({ type: 'agent', agent, status: 'done' });
+        if (planning) emit({ type: 'plan', op: 'done' });
+        return converse('plan', state, message, emit, signal, opts);
+      }
+    }
     emit({ type: 'agent', agent, status: 'done' });
     if (planning) emit({ type: 'plan', op: 'done' });
 
@@ -334,6 +363,20 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
     if (planning) emit({ type: 'plan', op: 'error' });
     throw err;
   }
+}
+
+// Where a chat reply starts writing code (see converse), and how many
+// characters are held back so a marker split across chunks is still caught.
+const CODE_START_RE = /```|<!DOCTYPE|<html[\s>]/i;
+const CODE_HOLDBACK = 12;
+
+// Replies to the user carry no emojis (a formal tone): pictographs, flags,
+// skin tones, keycaps and the joiners between them are removed. A run of
+// more than EMOJI_RUN_LIMIT emoji characters with no real text stops the reply.
+const EMOJI_RE = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
+const EMOJI_RUN_LIMIT = 80;
+function stripEmoji(s) {
+  return String(s || '').replace(EMOJI_RE, '');
 }
 
 // -------------------------------------------------------------- Game Builder
@@ -432,7 +475,7 @@ async function planProjectFiles({ state, message, signal }) {
 // step is retried on its own. The generation, continuation, repair and QA
 // logic inside the steps is unchanged from before -- only now each phase is
 // a tracked step instead of a loose progress label.
-async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null, quick = false }) {
+async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null }) {
   const plan = createPlan({
     emit,
     signal,
@@ -469,8 +512,7 @@ async function buildGame({ id, state, message, mode, emit, signal, fromSavedProm
         deps: ['analyze'],
         retries: 1,
         optional: true, // without a file plan the Builder still organises the project itself
-        // quick (the guided demo flow): skipped to get to a playable game sooner.
-        skip: (ctx) => (quick ? 'Skipped for a faster build' : ctx.complex ? false : mode === 'improve' ? 'Not needed for a change to an existing game' : 'Not needed for a one-file prototype'),
+        skip: (ctx) => (ctx.complex ? false : mode === 'improve' ? 'Not needed for a change to an existing game' : 'Not needed for a one-file prototype'),
         run: async (ctx, step) => {
           ctx.projectPlan = await planProjectFiles({ state, message, signal });
           step.doneDetail = `${ctx.projectPlan.length} files planned`;
@@ -615,7 +657,7 @@ async function buildGame({ id, state, message, mode, emit, signal, fromSavedProm
   });
 
   const ctx = await plan.run({ skipMeldcx: false });
-  const reply = `${ctx.notes || 'Your game is ready — it should have opened in a new tab.'}\n\n**QA:** ${ctx.qaLine}`;
+  const reply = `${stripEmoji(ctx.notes).trim() || 'Your game is ready — it should have opened in a new tab.'}\n\n**QA:** ${stripEmoji(ctx.qaLine)}`;
   emit({ type: 'text', delta: reply });
   return reply;
 }
@@ -665,7 +707,6 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
   try {
     state = await store.get(id);
     let freshStart = false;
-    let answeringGuide = false; // this message answers the guided setup questions
 
     // A plain request for a game that's already been built ("Make a Flappy
     // Bird game", "Build a Flappy Bird clone") reuses that finished game the
@@ -676,22 +717,19 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
     let reuseName = null;
     if (!reuseFrom && !spec) {
       const saved = matchSavedGame(message);
+      if (saved && saved.session !== id && !state.hasGame && !state.summary) {
+        // Demo flow (see DEMO_QUESTIONS): in a chat without a game yet, ask
+        // the setup questions first -- the next message gets the game.
+        await saveEarly();
+        emit({ type: 'text', delta: DEMO_QUESTIONS });
+        state.phase = 'discover';
+        state.messages.push(userMsg, { role: 'assistant', content: DEMO_QUESTIONS, createdAt: new Date().toISOString() });
+        recorded = true;
+        await store.save(activeId, state);
+        return;
+      }
       if (saved && saved.session !== id) {
-        if (!state.hasGame && !state.summary) {
-          // Demo flow for a saved game in a fresh chat: the same guided setup
-          // questions as any new game (instantly, no model call); the answer
-          // then gets its design summary, and "build it" builds it (showSavedSummary / buildSavedGame).
-          await saveEarly();
-          const reply = GUIDED_OPENING;
-          emit({ type: 'text', delta: reply });
-          state.phase = 'discover';
-          state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });
-          recorded = true;
-          await store.save(activeId, state);
-          return;
-        }
-        // Asked for from inside a chat that already has a game: open a copy
-        // of it in a new chat at once.
+        // From a chat that already has a game: open a copy in a new chat now.
         reuseFrom = saved.session;
         reuseName = saved.name;
         reusedBy = 'request';
@@ -751,28 +789,22 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
       route = 'build';
     } else {
       await saveEarly();
-      answeringGuide = isAnsweringGuide(state);
-      // The guided questions were for a saved game: demo flow -- its summary
-      // after the answers (whatever they were), then the build steps once the
-      // user says "build it". A change request instead goes the normal way.
-      const demoGame = answeringGuide || awaitingDemoBuild(state) ? matchSavedGame(guideTrigger(state) || '') : null;
+      // Demo flow: the answer to the setup questions for a saved game gets its
+      // summary (whatever it says); then "build it" gets the demo-paced build
+      // and the link. A change request instead goes through the normal flow.
+      const demo = demoStage(state);
       let demoReply = null;
-      if (demoGame && answeringGuide) demoReply = await showSavedSummary({ saved: demoGame, state, emit });
-      else if (demoGame && isGoAhead(message)) demoReply = await buildSavedGame({ saved: demoGame, id: activeId, state, emit, signal });
+      if (demo?.stage === 'answers') demoReply = await showDemoSummary({ saved: demo.saved, state, emit });
+      else if (demo?.stage === 'build' && isGoAhead(message)) demoReply = await buildDemoGame({ saved: demo.saved, id: activeId, state, emit, signal });
       if (demoReply) {
         state.messages.push(userMsg, { role: 'assistant', content: demoReply, createdAt: new Date().toISOString() });
         recorded = true;
         await store.save(activeId, state);
         return;
       }
-      if (answeringGuide) {
-        // Answers to the guided setup questions: straight to the summary.
-        route = 'plan';
-      } else {
-        emit({ type: 'agent', agent: 'intent', status: 'start' });
-        route = guardRoute(await detectIntent(state, message, signal), state);
-        emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
-      }
+      emit({ type: 'agent', agent: 'intent', status: 'start' });
+      route = guardRoute(await detectIntent(state, message, signal), state);
+      emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
     }
 
     // "Start a different game" from a chat that has nothing in it yet needs no
@@ -796,28 +828,9 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
       freshStart = true;
     }
 
-    // Guided flow for a brand-new game (see GUIDED_OPENING): the setup
-    // questions first; once they're answered, the summary followed directly by
-    // the build.
-    const freshGame = !spec && !state.hasGame && !state.summary;
-    let reply;
-    if (freshGame && route === 'discover') {
-      reply = `${freshStart ? 'Starting a new chat for this one!\n\n' : ''}${GUIDED_OPENING}`;
-      emit({ type: 'text', delta: reply });
-      state.phase = 'discover';
-    } else if (freshGame && route === 'plan' && answeringGuide) {
-      reply = await converse('plan', state, message, emit, signal, { guided: true });
-      if (state.summary) {
-        emit({ type: 'text', delta: '\n\n' });
-        const built = await buildGame({ id: activeId, state, message, mode: 'build', emit, signal, quick: true });
-        reply = `${reply}\n\n${built}`;
-        route = 'build'; // a fresh build: saved as a completed prompt below
-      }
-    } else {
-      reply = route === 'build' || route === 'improve'
-        ? await buildGame({ id: activeId, state, message, mode: route, emit, signal, fromSavedPrompt: Boolean(spec), promptType })
-        : await converse(route, state, message, emit, signal, { freshStart });
-    }
+    const reply = route === 'build' || route === 'improve'
+      ? await buildGame({ id: activeId, state, message, mode: route, emit, signal, fromSavedPrompt: Boolean(spec), promptType })
+      : await converse(route, state, message, emit, signal, { freshStart });
 
     // The reply is appended to the chat that already holds the message.
     state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });

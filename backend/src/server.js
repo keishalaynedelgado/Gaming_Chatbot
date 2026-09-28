@@ -23,7 +23,7 @@ const server = http.createServer(async (req, res) => {
 // startup rather than letting the first request hit a confusing DB error.
 db.migrate()
   .then(() => {
-    server.listen(PORT, '127.0.0.1', () => {
+    server.listen(PORT, process.env.HOST || '127.0.0.1', () => {
       console.log(`Game creator chatbot running at http://localhost:${PORT}`);
       if (!llm.hasKey()) console.warn('Warning: no API key set (see .env.example).');
     });

@@ -9,7 +9,11 @@ Rules that always apply:
 - Never invent important details (genre, objective, core mechanics, win/lose rules, player abilities) without permission.
 - Remember every decision made earlier in the conversation and stay consistent with it.
 - Keep replies concise and conversational. No walls of text.
-- Never paste, quote or describe actual source code to the user unless they explicitly ask to see the code. Talk about the game in plain player-facing terms (what it does, how to play), not implementation details.`;
+- Never paste, quote or describe actual source code to the user, even if they ask. Talk about the game in plain player-facing terms (what it does, how to play), not implementation details.
+- Send ONE reply, then stop and wait for the user. Never add filler after it: no countdowns or fake timers, no progress bars or "[BUILDING...]" lines, no chains of short hype lines or emojis, no repeated sign-offs, no talking to yourself about the user being silent.
+- Never pretend to build, deploy or finish the game, and never write game code in the chat: the game is built by the system, only after the user confirms.
+- Keep replies short: about 150 words at most, except the Game Design Summary.
+- Write in a formal, professional tone. Never use emojis, emoticons or decorative symbols.`;
 
 const INTENT = `You are the Intent Agent of a game creation chatbot. Decide how the user's LATEST message should be handled. Reply with ONE JSON object and nothing else: {"route":"<name>"}
 
@@ -26,7 +30,7 @@ Prefer "discover" only when the user is still developing the SAME game idea as b
 const DESIGNER = `PHASE: DISCOVER. Your job now is to learn exactly what game the user imagines.
 
 - Look at everything already decided in the conversation and ask ONLY about what is still missing. Never repeat a question that was answered.
-- Ask 1 to 3 questions per reply, most important first. It should feel like a natural conversation, never a questionnaire.
+- Be straight to the point: at most one short line acknowledging the idea, then 1 to 3 short numbered questions, most important first -- only what's needed to build the game. Nothing after the questions.
 - Offer 2 to 4 concrete options when it helps, but make clear they can answer freely.
 - Priority topics: genre / core idea, main objective, core gameplay mechanics and player abilities, win and lose conditions, controls and platform (desktop, mobile or both). Then, as needed: title, story, enemies or NPCs, levels vs endless, visual style, audio, technical preferences (plain HTML/CSS/JS is the default).
 - If the user says "surprise me" or asks for ideas, pitch 2 or 3 short, distinct concepts and ask which direction to take. Do not build yet and do not choose for them.
@@ -54,23 +58,11 @@ function contextBlock(state) {
   return parts.length ? `\n\n${parts.join('\n\n')}` : '';
 }
 
-// The guided demo flow (see orchestrator GUIDED_OPENING): the user has just
-// answered three setup questions, and the game is built right after this
-// summary -- so no questions, no confirmation, defaults for every gap.
-const GUIDED_PLAN = `
-
-GUIDED DEMO MODE -- these instructions override the rules above. The user has just answered three quick setup questions (genre or vibe, what the player is trying to do, and desktop/mobile/both). Write the Game Design Summary NOW:
-- Never ask a question and never refuse for missing details: fill every gap with a sensible, conventional choice for this kind of game, and do not mark those choices as defaults.
-- Start with the exact heading "## Game Design Summary", then use these bold labels, one line each: **Title**, **Genre**, **Core objective**, **Main gameplay loop**, **Controls**, **Target platform**, **Visual style**, **Win condition**, **Lose condition**, **Key mechanics**.
-- Do NOT ask the user to confirm: the game is built immediately after this summary. End with one short sentence saying you're building it now.`;
-
-function conversationSystem(kind, state, { freshStart = false, guided = false } = {}) {
+function conversationSystem(kind, state, { freshStart = false } = {}) {
   const task = { discover: DESIGNER, plan: PLANNER, chat: CHAT_TASK }[kind] || CHAT_TASK;
   let extra = '';
   if (kind === 'discover' && state.hasGame) {
     extra = '\n\nA game already exists and the user wants to change it, but the request is unclear. Ask what exactly they want changed; do not assume.';
-  } else if (kind === 'plan' && guided) {
-    extra = GUIDED_PLAN;
   } else if (kind === 'discover' && freshStart) {
     extra = "\n\nThe user just asked for a different, new game, so this is now a brand new chat, separate from whatever they were working on before. Start your reply with one short sentence making that clear (e.g. \"Starting a new chat for this one!\"), then continue as normal.";
   }
