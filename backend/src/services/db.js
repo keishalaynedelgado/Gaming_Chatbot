@@ -106,6 +106,10 @@ async function migrate() {
     -- A built game the user doesn't want listed under Saved prompts; the chat
     -- and the game itself are untouched.
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS hide_from_saved BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Pinned chats: when it was pinned (NULL = not pinned). Stored here so
+    -- pins survive restarts, cleared browsers and other devices; the time
+    -- keeps pinned chats in the order they were pinned.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
   `);
   // game_files no longer exists on a fresh install (see the module comment
   // above) -- an install that predates this change may still have the old

@@ -72,6 +72,21 @@ async function renameSession(req, res, id) {
   return json(res, 200, { id, title });
 }
 
+// POST /api/session/:id/pin -- pin or unpin a chat. Body: { pinned: boolean }.
+async function pinSession(req, res, id) {
+  if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch (err) {
+    return json(res, err.status || 400, { error: err.status ? err.message : 'Invalid JSON' });
+  }
+  if (typeof body.pinned !== 'boolean') return json(res, 400, { error: 'pinned must be true or false' });
+  const pinnedAt = await store.setPinned(id, body.pinned);
+  if (pinnedAt === undefined) return json(res, 404, { error: 'No such chat (or it is in the trash)' });
+  return json(res, 200, { id, pinnedAt });
+}
+
 // DELETE /api/session/:id -- soft delete (see store.softDeleteSession).
 async function deleteSession(req, res, id) {
   if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
@@ -88,4 +103,4 @@ async function restoreSession(req, res, id) {
   return json(res, 200, { id, deleted: false });
 }
 
-module.exports = { getSession, listSessions, listSavedPrompts, createSavedPrompt, renameSession, deleteSession, restoreSession };
+module.exports = { getSession, listSessions, pinSession, listSavedPrompts, createSavedPrompt, renameSession, deleteSession, restoreSession };

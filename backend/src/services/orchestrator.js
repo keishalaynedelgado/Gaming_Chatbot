@@ -105,6 +105,144 @@ function matchSavedGame(message) {
   )) || null;
 }
 
+// ------------------------------------------------------------ Guided flow
+// A brand-new game (not a saved one) starts with these three setup questions,
+// sent instantly -- no model call. The user's answer then goes straight to the
+// Game Design Summary and, right after it, the build: no further questions,
+// confirmation or file planning, so a demo moves fast.
+const GUIDED_OPENING = `I can build a web game with you. To start:
+
+1. What genre or vibe do you want?
+   - Arcade
+   - Puzzle
+   - Platformer
+   - Endless runner / survival
+   - Something else
+
+2. What should the player be trying to do?
+   - Collect items
+   - Avoid enemies
+   - Beat levels
+   - Survive as long as possible
+
+3. Should it be for desktop, mobile, or both?`;
+const GUIDED_MARK = 'I can build a web game with you. To start:';
+
+// Is this chat waiting for the answers to the guided setup questions?
+function isAnsweringGuide(state) {
+  if (state.hasGame || state.summary || state.phase !== 'discover') return false;
+  const lastReply = [...state.messages].reverse().find((m) => m.role === 'assistant');
+  return Boolean(lastReply?.content.includes(GUIDED_MARK));
+}
+
+// The user message that asked for the guided questions (the one just before
+// the reply that asked them) -- tells which saved game, if any, is being made.
+function guideTrigger(state) {
+  for (let i = state.messages.length - 1; i > 0; i -= 1) {
+    const m = state.messages[i];
+    if (m.role === 'assistant' && m.content.includes(GUIDED_MARK)) {
+      return state.messages[i - 1]?.role === 'user' ? state.messages[i - 1].content : null;
+    }
+  }
+  return null;
+}
+
+// Demo flow for a saved game (config/savedGames.md), mirroring a real build
+// step for step but with no model calls: guided questions -> its Game Design
+// Summary, ending with the usual "say build it" -> on "build it", the build
+// plan at demo pace, whose steps do real work (copy the finished project, run
+// the automated checks on it, save it to this chat).
+const DEMO_CONFIRM = 'Does this match your vision? You can say **build it** or tell me what to change.';
+const DEMO_STEP_MS = { analyze: 500, plan: 800, generate: 1400, validate: 600 };
+
+// Only a pure go-ahead ("build it", "yes", "looks good, go ahead") counts --
+// anything asking for a change goes through the normal flow instead.
+const GO_AHEAD_WORDS = new Set(['build', 'it', 'now', 'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'go', 'ahead', 'do', 'looks', 'look', 'good', 'great', 'perfect', 'please', 'proceed', 'lets', 'let', 's', 'sounds', 'confirm', 'confirmed', 'that', 'thats', 'is', 'fine', 'awesome', 'cool', 'nice', 'start', 'make', 'the', 'game']);
+function isGoAhead(message) {
+  const words = store.normalizeText(message).split(' ').filter(Boolean);
+  return words.length > 0 && words.length <= 8 && words.every((w) => GO_AHEAD_WORDS.has(w));
+}
+
+// Is this chat's last reply a saved game's summary waiting for "build it"?
+function awaitingDemoBuild(state) {
+  if (state.hasGame) return false;
+  const lastReply = [...state.messages].reverse().find((m) => m.role === 'assistant');
+  return Boolean(lastReply?.content.includes(DEMO_CONFIRM));
+}
+
+async function loadSavedProject(saved) {
+  const source = await store.get(saved.session);
+  const files = source.hasGame ? await store.readProjectFiles(saved.session, source) : null;
+  return files && Object.keys(files).length ? { source, files } : null;
+}
+
+// Step 2: the saved game's Game Design Summary, then the usual confirmation.
+// Returns the reply, or null if its project is missing (normal flow instead).
+async function showSavedSummary({ saved, state, emit }) {
+  const project = await loadSavedProject(saved);
+  if (!project) return null;
+  const design = store.finalPrompt(project.source.summary || '');
+  // Every summary opens with the game's title, even a design written without one.
+  const titled = /\*\*Title:?\*\*/i.test(design) ? design : `**Title**: ${saved.name}\n\n${design}`;
+  const reply = `## Game Design Summary\n\n${titled}\n\n${DEMO_CONFIRM}`;
+  emit({ type: 'text', delta: reply });
+  state.summary = project.source.summary;
+  state.phase = 'plan';
+  return reply;
+}
+
+// Step 3 ("build it"): the build plan at demo pace, then the finished game.
+async function buildSavedGame({ saved, id, state, emit, signal }) {
+  const project = await loadSavedProject(saved);
+  if (!project) return null;
+  const { files } = project;
+  const fileCount = Object.keys(files).length;
+  const pause = (ms) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
+  });
+
+  await createPlan({
+    emit,
+    signal,
+    steps: [
+      { id: 'analyze', label: 'Analyzing request', run: async (ctx, s) => { await pause(DEMO_STEP_MS.analyze); s.doneDetail = 'Full project build'; } },
+      { id: 'plan', label: 'Planning project', deps: ['analyze'], run: async (ctx, s) => { await pause(DEMO_STEP_MS.plan); s.doneDetail = `${fileCount} files planned`; } },
+      {
+        id: 'generate', label: 'Generating files', deps: ['plan'],
+        run: async (ctx, s) => {
+          emit({ type: 'agent', agent: 'builder', status: 'start' });
+          await pause(DEMO_STEP_MS.generate);
+          s.doneDetail = `${fileCount} files in the project`;
+        },
+      },
+      {
+        id: 'validate', label: 'Validating output', deps: ['generate'],
+        run: async (ctx, s) => {
+          const check = qa.staticCheck(files);
+          await pause(DEMO_STEP_MS.validate);
+          emit({ type: 'agent', agent: 'builder', status: 'done' });
+          s.doneDetail = check.errors.length ? `${check.errors.length} warning(s)` : 'All checks passed';
+        },
+      },
+      {
+        id: 'finalize', label: 'Finalizing project', deps: ['validate'],
+        run: async () => {
+          const version = await store.saveProject(id, state, files);
+          state.phase = 'built';
+          // Waits for the user's click on "Open game in new tab".
+          emit({ type: 'game', url: `/games/${id}/index.html?v=${version}`, version, autoOpen: false });
+        },
+      },
+    ],
+  }).run({});
+
+  const reply = `Your game is ready — click **Open game in new tab** to play. Ask for any changes and I'll update it.\n\n**QA:** Automated checks passed.`;
+  emit({ type: 'text', delta: reply });
+  return reply;
+}
+
 // ---------------------------------------------------------------- Intent Agent
 async function detectIntent(state, message, signal) {
   const recent = state.messages
@@ -151,7 +289,8 @@ function guardRoute(route, state) {
 // plain chat does not, since it isn't "designing or building a game".
 async function converse(kind, state, message, emit, signal, opts = {}) {
   const agent = { discover: 'designer', plan: 'planner', chat: 'chat' }[kind];
-  const planning = kind === 'discover' || kind === 'plan';
+  // The guided flow skips the planning feed: the summary streams straight in.
+  const planning = (kind === 'discover' || kind === 'plan') && !opts.guided;
   if (planning) {
     emit({ type: 'plan', op: 'start' });
     emit({ type: 'plan', op: 'step', label: kind === 'plan' ? 'Reviewing your requirements.' : "Gathering the game's requirements." });
@@ -293,7 +432,7 @@ async function planProjectFiles({ state, message, signal }) {
 // step is retried on its own. The generation, continuation, repair and QA
 // logic inside the steps is unchanged from before -- only now each phase is
 // a tracked step instead of a loose progress label.
-async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null }) {
+async function buildGame({ id, state, message, mode, emit, signal, fromSavedPrompt = false, promptType = null, quick = false }) {
   const plan = createPlan({
     emit,
     signal,
@@ -330,7 +469,8 @@ async function buildGame({ id, state, message, mode, emit, signal, fromSavedProm
         deps: ['analyze'],
         retries: 1,
         optional: true, // without a file plan the Builder still organises the project itself
-        skip: (ctx) => (ctx.complex ? false : mode === 'improve' ? 'Not needed for a change to an existing game' : 'Not needed for a one-file prototype'),
+        // quick (the guided demo flow): skipped to get to a playable game sooner.
+        skip: (ctx) => (quick ? 'Skipped for a faster build' : ctx.complex ? false : mode === 'improve' ? 'Not needed for a change to an existing game' : 'Not needed for a one-file prototype'),
         run: async (ctx, step) => {
           ctx.projectPlan = await planProjectFiles({ state, message, signal });
           step.doneDetail = `${ctx.projectPlan.length} files planned`;
@@ -525,6 +665,7 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
   try {
     state = await store.get(id);
     let freshStart = false;
+    let answeringGuide = false; // this message answers the guided setup questions
 
     // A plain request for a game that's already been built ("Make a Flappy
     // Bird game", "Build a Flappy Bird clone") reuses that finished game the
@@ -536,6 +677,21 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
     if (!reuseFrom && !spec) {
       const saved = matchSavedGame(message);
       if (saved && saved.session !== id) {
+        if (!state.hasGame && !state.summary) {
+          // Demo flow for a saved game in a fresh chat: the same guided setup
+          // questions as any new game (instantly, no model call); the answer
+          // then gets its design summary, and "build it" builds it (showSavedSummary / buildSavedGame).
+          await saveEarly();
+          const reply = GUIDED_OPENING;
+          emit({ type: 'text', delta: reply });
+          state.phase = 'discover';
+          state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });
+          recorded = true;
+          await store.save(activeId, state);
+          return;
+        }
+        // Asked for from inside a chat that already has a game: open a copy
+        // of it in a new chat at once.
         reuseFrom = saved.session;
         reuseName = saved.name;
         reusedBy = 'request';
@@ -595,9 +751,28 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
       route = 'build';
     } else {
       await saveEarly();
-      emit({ type: 'agent', agent: 'intent', status: 'start' });
-      route = guardRoute(await detectIntent(state, message, signal), state);
-      emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
+      answeringGuide = isAnsweringGuide(state);
+      // The guided questions were for a saved game: demo flow -- its summary
+      // after the answers (whatever they were), then the build steps once the
+      // user says "build it". A change request instead goes the normal way.
+      const demoGame = answeringGuide || awaitingDemoBuild(state) ? matchSavedGame(guideTrigger(state) || '') : null;
+      let demoReply = null;
+      if (demoGame && answeringGuide) demoReply = await showSavedSummary({ saved: demoGame, state, emit });
+      else if (demoGame && isGoAhead(message)) demoReply = await buildSavedGame({ saved: demoGame, id: activeId, state, emit, signal });
+      if (demoReply) {
+        state.messages.push(userMsg, { role: 'assistant', content: demoReply, createdAt: new Date().toISOString() });
+        recorded = true;
+        await store.save(activeId, state);
+        return;
+      }
+      if (answeringGuide) {
+        // Answers to the guided setup questions: straight to the summary.
+        route = 'plan';
+      } else {
+        emit({ type: 'agent', agent: 'intent', status: 'start' });
+        route = guardRoute(await detectIntent(state, message, signal), state);
+        emit({ type: 'agent', agent: 'intent', status: 'done', detail: route });
+      }
     }
 
     // "Start a different game" from a chat that has nothing in it yet needs no
@@ -621,9 +796,28 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
       freshStart = true;
     }
 
-    const reply = route === 'build' || route === 'improve'
-      ? await buildGame({ id: activeId, state, message, mode: route, emit, signal, fromSavedPrompt: Boolean(spec), promptType })
-      : await converse(route, state, message, emit, signal, { freshStart });
+    // Guided flow for a brand-new game (see GUIDED_OPENING): the setup
+    // questions first; once they're answered, the summary followed directly by
+    // the build.
+    const freshGame = !spec && !state.hasGame && !state.summary;
+    let reply;
+    if (freshGame && route === 'discover') {
+      reply = `${freshStart ? 'Starting a new chat for this one!\n\n' : ''}${GUIDED_OPENING}`;
+      emit({ type: 'text', delta: reply });
+      state.phase = 'discover';
+    } else if (freshGame && route === 'plan' && answeringGuide) {
+      reply = await converse('plan', state, message, emit, signal, { guided: true });
+      if (state.summary) {
+        emit({ type: 'text', delta: '\n\n' });
+        const built = await buildGame({ id: activeId, state, message, mode: 'build', emit, signal, quick: true });
+        reply = `${reply}\n\n${built}`;
+        route = 'build'; // a fresh build: saved as a completed prompt below
+      }
+    } else {
+      reply = route === 'build' || route === 'improve'
+        ? await buildGame({ id: activeId, state, message, mode: route, emit, signal, fromSavedPrompt: Boolean(spec), promptType })
+        : await converse(route, state, message, emit, signal, { freshStart });
+    }
 
     // The reply is appended to the chat that already holds the message.
     state.messages.push(userMsg, { role: 'assistant', content: reply, createdAt: new Date().toISOString() });

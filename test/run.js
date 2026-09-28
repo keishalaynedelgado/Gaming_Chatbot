@@ -239,20 +239,21 @@ async function main() {
   assert.equal(text(evts), 'Hi there!');
   assert.ok(evts.at(-1).type === 'done');
 
-  evts = await chat(port, id, 'route:discover I want a game');
-  assert.equal(text(evts), 'What is the objective?');
-
+  // A brand-new game starts the guided flow: the three setup questions, sent
+  // instantly without any model call. "Build it" with no design yet lands
+  // there too (no summary -> discover).
+  const GUIDED = 'I can build a web game with you. To start:';
   evts = await chat(port, id, 'route:build build it now');
-  assert.equal(text(evts), 'What is the objective?'); // no summary yet -> falls back to discover
+  assert.ok(text(evts).startsWith(GUIDED), 'a new game must start with the guided setup questions');
 
-  evts = await chat(port, id, 'route:plan enough info');
+  // Answering them goes straight to the Game Design Summary and, in the same
+  // turn, the build -- no confirmation step. First builder output has a
+  // syntax error, so it must be repaired (resending only the broken file) via
+  // the deterministic static check, then the docs are written server-side.
+  // QA_REVIEW is unset here (the default), so this also proves the extra LLM
+  // QA pass is genuinely skipped for speed.
+  evts = await chat(port, id, 'route:plan arcade, collect coins, desktop');
   assert.ok(text(evts).includes('## Game Design Summary'));
-
-  // First builder output has a syntax error, so it must be repaired (resending
-  // only the broken file) via the deterministic static check, then the docs
-  // are written server-side. QA_REVIEW is unset here (the new default), so
-  // this also proves the extra LLM QA pass is genuinely skipped for speed.
-  evts = await chat(port, id, 'route:build yes build it');
   assert.equal(builderCalls, 2, 'builder should be re-run once to repair the syntax error');
   assert.equal(qaCalls, 0, 'the extra LLM QA pass must be skipped by default (one-pass generation, for speed)');
   const game = evts.find((e) => e.type === 'game');
@@ -387,7 +388,9 @@ async function main() {
   // Session restore and validation.
   const session = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
   assert.equal(session.hasGame, true);
-  assert.equal(session.messages.length, 12);
+  // hello, "build it now" (-> guided questions), the answers (-> summary +
+  // build in one turn), improve: 4 exchanges.
+  assert.equal(session.messages.length, 8);
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/session/..%2f..%2fx`)).status, 400);
   assert.equal((await fetch(`http://127.0.0.1:${port}/..%2fserver.js`)).status, 403);
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
@@ -435,7 +438,7 @@ async function main() {
   // Soft delete must not block direct access (an already-open game tab must
   // keep working) -- nothing was actually removed.
   let fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
-  assert.equal(fetched.messages.length, 12, "a soft-deleted session's messages must be completely intact");
+  assert.equal(fetched.messages.length, 8, "a soft-deleted session's messages must be completely intact");
   assert.equal(fetched.hasGame, true);
   assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), "a soft-deleted session's game files must be completely intact");
 
@@ -459,7 +462,7 @@ async function main() {
   trashed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions?deleted=1`)).json()).sessions;
   assert.ok(!trashed.some((s) => s.id === id), 'a restored chat must disappear from the trash');
   fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
-  assert.equal(fetched.messages.length, 12, 'restore must not lose any messages');
+  assert.equal(fetched.messages.length, 8, 'restore must not lose any messages');
   assert.equal(fetched.hasGame, true);
   assert.equal(fetched.gameUrl, `/games/${id}/index.html?v=2`, 'restore must preserve the exact game version');
   assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), 'restore must preserve the game files');
