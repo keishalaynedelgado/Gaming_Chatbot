@@ -6,7 +6,10 @@ const claude = require('./llm');
 const prompts = require('./prompts');
 const qa = require('./qa');
 const store = require('./store');
+const exporter = require('./exporter');
+const iconDesigner = require('./iconDesigner');
 const { createPlan } = require('./planRunner');
+const log = require('../utils/logger');
 
 const ROUTES = ['chat', 'discover', 'plan', 'build', 'improve', 'new_game'];
 const busy = new Set();
@@ -40,6 +43,63 @@ function autoTitle(message) {
   const cut = flat.slice(0, TITLE_MAX);
   const lastSpace = cut.lastIndexOf(' ');
   return `${lastSpace > 20 ? cut.slice(0, lastSpace) : cut}…`;
+}
+
+// Once the design names the game, the chat is named after it ("Chess Master"
+// instead of "create a chess game") -- unless the user renamed it themselves.
+function retitle(state, emit) {
+  const title = store.summaryTitle(state.summary);
+  if (!title || state.titleAuto === false || state.title === title) return;
+  state.title = title;
+  state.titleAuto = true;
+  emit({ type: 'title', title, titleAuto: true });
+}
+
+// ----------------------------------------------------------------- Preferences
+// General topics worth remembering between games -- not game-specific ones
+// like genre or story -- recognised from a setup question's wording, or else
+// its options. Later games start from the user's usual choice on each
+// (prompts.conversationSystem) instead of asking again.
+const PREFERENCE_TOPICS = [
+  ['platform', /\b(platform|desktop|mobile|phone|tablet|device|pc)\b/i],
+  ['difficulty', /\b(difficulty|difficult|easy|hard|challenging)\b/i],
+  ['controls', /\b(controls?|keyboard|touch|mouse|swipe|tap)\b/i],
+  ['visual', /\b(visuals?|art|graphics|look)\b/i],
+  ['audio', /\b(audio|sounds?|music)\b/i],
+];
+
+// A reply's numbered questions that have "- option" bullets under them.
+function parseQuestions(text) {
+  const questions = [];
+  for (const line of String(text || '').split('\n')) {
+    const q = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    const o = line.match(/^\s*[-*]\s+(.+)$/);
+    if (q) questions.push({ n: Number(q[1]), text: q[2], options: [] });
+    else if (o && questions.length) questions[questions.length - 1].options.push(o[1].replace(/[*_`]/g, '').trim());
+  }
+  return questions.filter((q) => q.options.length >= 2);
+}
+
+function preferenceTopic(question) {
+  const match = (s) => PREFERENCE_TOPICS.find(([, re]) => re.test(s))?.[0];
+  return match(question.text) || match(question.options.join(' ')) || null;
+}
+
+// Remembers the user's answers ("1. Easy\n3. Mobile", or a bare answer to a
+// single question -- which is what the answer buttons send) to the questions
+// just asked, on the topics above.
+async function recordAnswers(state, message) {
+  const last = [...state.messages].reverse().find((m) => m.role === 'assistant')?.content;
+  const questions = parseQuestions(last);
+  if (!questions.length) return;
+  const answers = new Map([...message.matchAll(/^\s*(\d+)[.)]\s*(.+)$/gm)].map((m) => [Number(m[1]), m[2].trim()]));
+  if (!answers.size && questions.length === 1) answers.set(questions[0].n, message.trim());
+  for (const q of questions) {
+    const topic = preferenceTopic(q);
+    const answer = answers.get(q.n);
+    if (!topic || !answer || answer.length > 40 || /something else|\bother\b|not sure|you choose|surprise/i.test(answer)) continue;
+    await store.recordPreference(topic, answer);
+  }
 }
 
 // ---------------------------------------------------------------- Game reuse
@@ -126,7 +186,10 @@ const DEMO_QUESTIONS = `Great choice! Before I build it, tell me a bit about how
    - Beat levels
    - Survive as long as possible
 
-3. Should it be for desktop, mobile, or both?`;
+3. Should it be for desktop, mobile, or both?
+   - Desktop
+   - Mobile
+   - Both`;
 const DEMO_MARK = 'Before I build it, tell me a bit about how you\'d like it:';
 const DEMO_STEP_MS = { analyze: 500, plan: 800, generate: 1400, validate: 600 };
 
@@ -174,6 +237,7 @@ async function showDemoSummary({ saved, state, emit }) {
   const reply = `## Game Design Summary\n\n${titled}\n\n${DEMO_CONFIRM}`;
   emit({ type: 'text', delta: reply });
   state.summary = project.source.summary;
+  retitle(state, emit);
   state.phase = 'plan';
   return reply;
 }
@@ -226,6 +290,155 @@ async function buildDemoGame({ saved, id, state, emit, signal }) {
   }).run({});
 
   const reply = 'Your game is ready — click **Open game in new tab** to play. Ask for any changes and I\'ll update it.\n\n**QA:** Automated checks passed.';
+  emit({ type: 'text', delta: reply });
+  return reply;
+}
+
+// ------------------------------------------------------------------ App export
+// "Export it" (typed, or the game card's Export button) in a chat that has a
+// game: the chatbot first asks which app the user wants -- Android (APK),
+// Windows app (EXE), Windows installer (a Setup .exe with the MSI inside,
+// so the download shows the game's icon), iPhone & iPad (a profile that puts
+// the game on the Home Screen, since iOS only installs App Store apps) or
+// Mac (a zipped .app) -- then builds it (exporter.js) with the game's own
+// AI-designed icon (iconDesigner.js) and replies with the download link. A
+// request that already names the format ("export it as an APK") has
+// answered that question, so it builds straight away.
+const EXPORT_ASK = 'Reply with **APK**, **EXE**, **Setup**, **iPhone** or **Mac**.';
+const EXPORT_NAMES = {
+  apk: 'Android app (APK)',
+  exe: 'Windows app (EXE)',
+  setup: 'Windows installer (Setup)',
+  ios: 'iPhone & iPad app',
+  mac: 'Mac app',
+};
+const EXPORT_ORDER = ['apk', 'exe', 'setup', 'ios', 'mac'];
+
+// Asking to download or install the game, on any device, is an export too:
+// it gets the download buttons, never the chat model's own answer (which
+// could only describe a link).
+const DEVICE = '(android|windows|desktop|laptop|computer|mobile|phone|tablet|pc|iphone|ipad|ios|mac|macos|macbook|apple)';
+
+function wantsExport(message) {
+  const m = message.toLowerCase();
+  if (m.split(/\s+/).length > 14) return false; // a longer message is a change request, not an export
+  return /\b(export|apk|exe|msi|mobileconfig)\b/.test(m)
+    || /\b(download|install)\b/.test(m)
+    || new RegExp(`\\b${DEVICE}\\s+(app|application|installer|setup|version|file)\\b`).test(m);
+}
+
+// Which formats the message names ("apk and setup" picks two). Right after
+// the question, a bare "1" to "5" picks that option. A general "windows"
+// or "pc" means the EXE, unless the installer is asked for; "msi" means the
+// installer; "apple" means both the iPhone and the Mac app.
+function exportFormats(message, asked) {
+  const m = message.toLowerCase();
+  const pick = (n) => asked && new RegExp(`^\\s*${n}\\s*[.)]?\\s*$`).test(m);
+  const setup = /\b(setup|msi|installer)\b/.test(m) || pick(3);
+  const apk = /\b(apk|android)\b/.test(m) || pick(1);
+  const exe = /\bexe\b/.test(m) || (/\b(windows|pc|desktop)\b/.test(m) && !setup) || pick(2);
+  const ios = /\b(iphone|ipad|ios|ipados|apple)\b/.test(m) || pick(4);
+  const mac = /\b(mac|macos|macbook|imac|osx|apple)\b/.test(m) || pick(5);
+  if (/\ball( (three|four|five))?\b/.test(m) && asked) return EXPORT_ORDER;
+  if (/\bboth\b/.test(m) && !(setup && (apk || exe)) && !ios && !mac) return ['apk', 'exe'];
+  return EXPORT_ORDER.filter((f) => ({ apk, exe, setup, ios, mac })[f]);
+}
+
+async function exportFlow({ id, state, message, emit, signal }) {
+  if (!state.hasGame) return null;
+  const last = [...state.messages].reverse().find((m) => m.role === 'assistant')?.content || '';
+  // Any export question counts, including one asked before its wording changed.
+  const asked = /Reply with \*\*APK\*\*/.test(last) && message.trim().split(/\s+/).length <= 6;
+  const formats = exportFormats(message, asked);
+  if (asked && formats.length) return exportApps({ id, state, formats, emit, signal });
+  if (!wantsExport(message)) return null;
+  if (formats.length) return exportApps({ id, state, formats, emit, signal });
+
+  const reply = `Which app would you like for **${store.displayTitle(state)}**?\n\n`
+    + '1. **Android (APK)**: install it on an Android phone or tablet.\n'
+    + '2. **Windows app (EXE)**: a single file that runs the game directly, with nothing to install.\n'
+    + '3. **Windows installer (Setup)**: installs the game on the PC with Start menu and desktop shortcuts.\n'
+    + '4. **iPhone & iPad**: puts the game on the Home Screen, where it opens full screen like an app and plays offline.\n'
+    + '5. **Mac**: a Mac app that runs the game in its own window, offline.\n\n'
+    + EXPORT_ASK;
+  emit({ type: 'text', delta: reply });
+  return reply;
+}
+
+async function exportApps({ id, state, formats, emit, signal }) {
+  try {
+    formats.forEach(exporter.checkTools);
+  } catch (err) {
+    console.error('[orchestrator] export unavailable:', err.message);
+    const reply = `The ${formats.map((f) => EXPORT_NAMES[f]).join(' and ')} cannot be created right now, because the export tools are not set up on this server.`;
+    emit({ type: 'text', delta: reply });
+    return reply;
+  }
+
+  const builds = formats.map((f) => `build-${f}`);
+  const ctx = await createPlan({
+    emit,
+    signal,
+    steps: [
+      {
+        id: 'prepare',
+        label: 'Preparing game files',
+        run: async (c, s) => {
+          Object.assign(c, await exporter.gameFiles(id, state));
+          s.doneDetail = `${Object.keys(c.files).length} files`;
+        },
+      },
+      {
+        // Designed once per game; every later export reuses it.
+        id: 'icon',
+        label: 'Designing the app icon',
+        run: async (c, s) => {
+          const { icon, designed } = await iconDesigner.gameIcon({ id, state, signal });
+          c.icon = icon;
+          s.doneDetail = designed ? 'Game icon ready' : 'Using the standard icon';
+        },
+      },
+      ...formats.map((f) => ({
+        id: `build-${f}`,
+        label: `Building the ${EXPORT_NAMES[f]}`,
+        deps: ['prepare', 'icon'],
+        run: async (c, s) => {
+          const cached = exporter.existing(id, state.gameVersion, f, state);
+          c[f] = cached || await exporter.build(f, { id, state, files: c.files, icon: c.icon, signal });
+          s.doneDetail = cached ? 'Already built for this version' : 'Built';
+        },
+      })),
+      {
+        id: 'check',
+        label: formats.length > 1 ? 'Checking the apps' : 'Checking the app',
+        deps: builds,
+        run: async (c, s) => {
+          for (const f of formats) await exporter.check(f, c[f], signal);
+          s.doneDetail = 'Ready to install';
+        },
+      },
+    ],
+  }).run({});
+
+  const lines = [`**${store.displayTitle(state)}** is ready to download.`, ''];
+  for (const f of formats) lines.push(`[Download ${EXPORT_NAMES[f]}](/games/${id}/export/${f}?v=${state.gameVersion})`, '');
+  if (formats.includes('apk')) {
+    lines.push('**Android:** open the downloaded file on the phone or tablet and allow installing apps from this source when asked. Because the app is not from the Play Store, Android may show a warning first.', '');
+  }
+  if (formats.includes('exe')) {
+    lines.push('**Windows app:** double-click the file to play. Windows may show a SmartScreen notice because the app is not signed; choose **More info**, then **Run anyway**.', '');
+  }
+  if (formats.includes('setup')) {
+    lines.push('**Windows installer:** double-click the file: it installs the game and opens it. After that, the same file, the Start menu or the desktop shortcut opens the game. Windows may show a SmartScreen notice because the installer is not signed; choose **More info**, then **Run anyway**. To remove the game, uninstall it from **Settings > Apps**.', '');
+  }
+  if (formats.includes('ios')) {
+    lines.push('**iPhone or iPad app:** tap the button on the iPhone or iPad itself (open this chat there) and tap **Allow**. Then open **Settings**, tap **Profile Downloaded** and **Install**. The game appears on the Home Screen with its icon and opens full screen, like an app. Open it **once while this server is running**: that saves the game on the iPhone, and from then on it plays with **no connection at all**. Whenever it can reach the server again, it picks up an improved game for the next launch. To remove it, delete its icon.', '');
+  }
+  if (formats.includes('mac')) {
+    lines.push(`**Mac:** double-click the downloaded file to unzip it (some browsers already do), then drag **${store.displayTitle(state)}** into **Applications** and open it. The first time, macOS blocks it because the app is not from the App Store: open **System Settings > Privacy & Security** and click **Open Anyway** (on older macOS, Control-click the app and choose **Open**). The app runs offline.`, '');
+  }
+  if (ctx.hasBackend) lines.push('Note: this game has server features, which do not work in the exported app. The app runs offline.', '');
+  const reply = lines.join('\n').trim();
   emit({ type: 'text', delta: reply });
   return reply;
 }
@@ -283,6 +496,10 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
   }
 
   emit({ type: 'agent', agent, status: 'start' });
+  // A new game's design starts from the user's usual choices (see recordAnswers).
+  const usual = planning && !state.hasGame
+    ? await store.usualChoices().catch((e) => { console.error('[orchestrator] could not read preferences:', e.message); return []; })
+    : [];
   // Code never reaches the chat: the reply is held back a few characters so
   // a code start (```, <!DOCTYPE, <html) is caught before it's shown; then the
   // model call is cancelled. The game itself is only ever written by the
@@ -300,7 +517,7 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
     try {
       ({ text } = await claude.stream({
         model: claude.MODELS.designer(),
-        system: prompts.conversationSystem(kind, state, opts),
+        system: prompts.conversationSystem(kind, state, { ...opts, usual }),
         messages: [...recentHistory(state), { role: 'user', content: message }],
         maxTokens: 2500,
         timeoutMs: 90000,
@@ -355,6 +572,7 @@ async function converse(kind, state, message, emit, signal, opts = {}) {
     if (kind === 'plan' && /##\s*Game Design Summary/i.test(text)) {
       state.summary = text.trim();
       state.phase = 'plan';
+      retitle(state, emit);
     } else if (kind === 'discover' && state.phase === 'none') {
       state.phase = 'discover';
     }
@@ -656,7 +874,23 @@ async function buildGame({ id, state, message, mode, emit, signal, fromSavedProm
     ],
   });
 
-  const ctx = await plan.run({ skipMeldcx: false });
+  // Game generation is the app's heaviest operation: log when it starts,
+  // and how it ended, with its duration.
+  const started = Date.now();
+  const build = { mode, from_saved_prompt: fromSavedPrompt };
+  log.info(`[build] ${mode} started`, { event: 'game_build_started', ...build });
+  let ctx;
+  try {
+    ctx = await plan.run({ skipMeldcx: false });
+  } catch (err) {
+    const fields = { ...build, duration_ms: Date.now() - started, err };
+    if (signal?.aborted) log.info(`[build] ${mode} stopped`, { event: 'game_build_cancelled', ...fields });
+    else log.error(`[build] ${mode} failed`, { event: 'game_build_failed', ...fields });
+    throw err;
+  }
+  log.info(`[build] ${mode} finished in ${((Date.now() - started) / 1000).toFixed(1)}s`, {
+    event: 'game_build_completed', ...build, duration_ms: Date.now() - started, game_version: state.gameVersion, file_count: Object.keys(ctx.project || {}).length,
+  });
   const reply = `${stripEmoji(ctx.notes).trim() || 'Your game is ready — it should have opened in a new tab.'}\n\n**QA:** ${stripEmoji(ctx.qaLine)}`;
   emit({ type: 'text', delta: reply });
   return reply;
@@ -785,10 +1019,21 @@ async function handleChat({ id, message, spec, promptType = null, loadGame = nul
       // Saved prompts are shown without the heading; the Builder and
       // docs/GAME_DESIGN.md expect the Planner's exact format, so restore it.
       state.summary = /^\s*##\s*Game Design Summary/i.test(spec) ? spec : `## Game Design Summary\n\n${spec}`;
+      retitle(state, emit);
       state.phase = 'plan';
       route = 'build';
     } else {
+      retitle(state, emit); // a chat from before titles followed the design gets its game's name now
       await saveEarly();
+      await recordAnswers(state, message).catch((e) => console.error('[orchestrator] could not save preferences:', e.message));
+      // App export (see exportFlow): asks APK or EXE, then builds and links it.
+      const exportReply = await exportFlow({ id: activeId, state, message, emit, signal });
+      if (exportReply) {
+        state.messages.push(userMsg, { role: 'assistant', content: exportReply, createdAt: new Date().toISOString() });
+        recorded = true;
+        await store.save(activeId, state);
+        return;
+      }
       // Demo flow: the answer to the setup questions for a saved game gets its
       // summary (whatever it says); then "build it" gets the demo-paced build
       // and the link. A change request instead goes through the normal flow.

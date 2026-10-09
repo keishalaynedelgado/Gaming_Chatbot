@@ -8,8 +8,23 @@
 // readFrontendFile). The database only ever keeps lightweight references to
 // them -- sessions.has_game and sessions.game_version.
 const { Pool } = require('pg');
+const log = require('../utils/logger');
 
 let pool = null;
+
+// Errors meaning the database itself is unreachable or refusing us (down,
+// wrong host/credentials, out of connections), as opposed to one bad query.
+// Logged as db_connection_error, which Graylog alerts on.
+const CONNECTION_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', '28P01', '3D000', '53300', '57P01', '57P02', '57P03']);
+const isConnectionError = (err) => CONNECTION_CODES.has(err?.code) || /^08/.test(err?.code || '')
+  || /Connection terminated|timeout exceeded when trying to connect/i.test(err?.message || '');
+
+// The SQL and its parameters are deliberately left out: parameters carry chat
+// messages and other user content.
+function logDbError(err, operation) {
+  const event = isConnectionError(err) ? 'db_connection_error' : 'db_query_error';
+  log.error(`[db] ${operation} failed`, { event, operation, err });
+}
 
 function getPool() {
   if (pool) return pool;
@@ -21,17 +36,25 @@ function getPool() {
   pool.on('error', (err) => {
     // A background/idle client error (e.g. the connection dropped) must not
     // crash the whole process -- the pool recovers new clients on the next query.
-    console.error('[db] unexpected error on idle client:', err.message);
+    log.error('[db] unexpected error on idle client', { event: 'db_connection_error', operation: 'idle_client', err });
   });
   return pool;
 }
 
-function query(text, params) {
-  return getPool().query(text, params);
+async function query(text, params) {
+  try {
+    return await getPool().query(text, params);
+  } catch (err) {
+    logDbError(err, 'query');
+    throw err;
+  }
 }
 
 async function withTransaction(fn) {
-  const client = await getPool().connect();
+  const client = await getPool().connect().catch((err) => {
+    logDbError(err, 'connect');
+    throw err;
+  });
   try {
     await client.query('BEGIN');
     const result = await fn(client);
@@ -39,6 +62,7 @@ async function withTransaction(fn) {
     return result;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    logDbError(err, 'transaction');
     throw err;
   } finally {
     client.release();
@@ -110,6 +134,15 @@ async function migrate() {
     -- pins survive restarts, cleared browsers and other devices; the time
     -- keeps pinned chats in the order they were pinned.
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+    -- The user's answers to the setup questions on general topics (platform,
+    -- difficulty, controls, visual style, audio), so later games can start
+    -- from their usual choice instead of asking again (store.usualChoices).
+    CREATE TABLE IF NOT EXISTS preference_answers (
+      id BIGSERIAL PRIMARY KEY,
+      topic TEXT NOT NULL,
+      value TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
   // game_files no longer exists on a fresh install (see the module comment
   // above) -- an install that predates this change may still have the old

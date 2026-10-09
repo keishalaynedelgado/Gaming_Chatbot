@@ -117,15 +117,51 @@ function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// An app's own built-in browser on an iPhone or iPad (Messenger, Facebook,
+// Instagram...): it can download the iPhone & iPad app's profile but can't
+// install it -- only the device's own browser can.
+const IN_APP_BROWSER = /iPhone|iPad|iPod/.test(navigator.userAgent)
+  && /FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\/|MicroMessenger|GSA\//.test(navigator.userAgent);
+
+// The iPhone & iPad app's download button. In an app's built-in browser it
+// hands the download to the device's own browser instead (iOS's
+// "x-safari-https://" addresses do that), which then offers to install it.
+function iosDownloadButton(label, href) {
+  if (!IN_APP_BROWSER) return `<a class="game-link" href="${href}" download>${label} ↓</a>`;
+  return `<a class="game-link" href="x-safari-${location.origin}${href}">${label} ↓</a>`
+    + '<span class="export-note">This chat is open inside another app, which can\'t install it, so the button opens the download in your browser. If nothing happens, tap ••• and choose <strong>Open in browser</strong>, then tap the button again.</span>';
+}
+
+// The iPhone profile opens the game at this page's address, which an iPhone
+// can't reach when it's this computer's own (localhost).
+function iosDownloadNote() {
+  if (!/^(localhost|127\.|\[::1\])/.test(location.hostname)) return '';
+  return '<span class="export-note">This chat is open at this computer\'s own address, which an iPhone can\'t reach: open the chat on the iPhone, at the address it can reach (such as your tunnel\'s), and download it there.</span>';
+}
+
 function inline(t) {
   return t
+    // Only the server's own exported-app links become buttons (see exportApps).
+    .replace(/\[([^\]]+)\]\((\/games\/[\w-]+\/export\/(apk|exe|msi|setup|ios|mac)\?v=\d+)\)/g, (all, label, href, format) => (format === 'ios'
+      ? iosDownloadButton(label, href) + iosDownloadNote()
+      : `<a class="game-link" href="${href}" download>${label} ↓</a>`))
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>');
 }
 
+// A reply from an earlier version of the export, which linked one page for
+// iPhone & Mac: its link and steps no longer apply, and its downloads now
+// come one platform at a time (Export app -> choose a platform), so it just
+// points there.
+function currentReply(src) {
+  if (!/\]\(\/play\/[\w-]+\/\)/.test(src)) return src;
+  return 'This download has moved. Tap **Export app** and choose a platform to get the game for that device.';
+}
+
 // Small markdown subset. Input is HTML-escaped first, so output is safe to inject.
 function renderMarkdown(src) {
+  src = currentReply(src);
   const out = [];
   let list = null; // top-level list currently open: null | 'ol' | 'ul'
   let liOpen = false; // an 'ol' item left open in case bullets nest under it
@@ -320,7 +356,170 @@ function appendGameLink(url, bubble) {
   download.className = 'game-link ghost';
   download.textContent = 'Download project ↓';
   target.appendChild(download);
+
+  // Asks the chatbot to export the game; it replies asking APK or EXE first.
+  const exportApp = document.createElement('button');
+  exportApp.type = 'button';
+  exportApp.className = 'game-link ghost';
+  exportApp.textContent = 'Export app';
+  exportApp.addEventListener('click', () => send('Export this game'));
+  target.appendChild(exportApp);
 }
+
+// ---------------------------------------------------------------- Answer buttons
+// The latest reply's choices become buttons, so the user can tap instead of
+// typing (typing still works):
+//   - setup questions (numbered, with "- option" lines under each): one
+//     question sends the tapped option straight away; with several, one
+//     option is picked per question and "Send answers" sends them together
+//     ("1. Easy\n3. Mobile")
+//   - the export question: one button per app type
+//   - a Game Design Summary waiting for the go-ahead: "Build it"
+// Only ever on the last message; sending anything removes them.
+function clearQuickReplies() {
+  for (const el of els.messages.querySelectorAll('.quick-replies')) el.remove();
+  for (const el of els.messages.querySelectorAll('.has-quick-replies')) el.classList.remove('has-quick-replies');
+}
+
+function quickButton(label, onClick, extra = '') {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `quick-reply${extra ? ` ${extra}` : ''}`;
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function quickRow() {
+  const row = document.createElement('div');
+  row.className = 'quick-replies';
+  return row;
+}
+
+function attachQuickReplies(bubble, raw) {
+  clearQuickReplies();
+  if (!bubble || !raw || els.messages.lastElementChild !== bubble) return;
+
+  if (/Reply with \*\*APK\*\*/.test(raw)) {
+    const row = quickRow();
+    for (const li of bubble.querySelectorAll('ol > li')) {
+      const label = li.querySelector('strong')?.textContent.trim();
+      if (label) row.append(quickButton(label, () => send(label)));
+    }
+    if (row.childElementCount) bubble.append(row);
+    return;
+  }
+
+  if (/Game Design Summary/i.test(raw) && /\bbuild it\b/i.test(raw)) {
+    const row = quickRow();
+    row.append(quickButton('Build it', () => send('Build it'), 'primary'));
+    bubble.append(row);
+    return;
+  }
+
+  const questions = [...bubble.querySelectorAll('ol > li')]
+    .map((li) => ({
+      li,
+      n: [...li.parentElement.children].indexOf(li) + 1,
+      options: [...(li.querySelector(':scope > ul')?.children || [])].map((o) => o.textContent.trim()).filter(Boolean),
+    }))
+    .filter((q) => q.options.length >= 2);
+  if (!questions.length) return;
+
+  if (questions.length === 1) {
+    const row = quickRow();
+    for (const option of questions[0].options) row.append(quickButton(option, () => send(option)));
+    questions[0].li.append(row);
+    questions[0].li.classList.add('has-quick-replies'); // the buttons replace the option list
+    return;
+  }
+
+  const picked = new Map(); // question number -> chosen option
+  const sendRow = quickRow();
+  const sendButton = quickButton('Send answers', () => {
+    send([...picked].sort((a, b) => a[0] - b[0]).map(([n, option]) => `${n}. ${option}`).join('\n'));
+  }, 'primary');
+  sendButton.disabled = true;
+  for (const q of questions) {
+    const row = quickRow();
+    for (const option of q.options) {
+      const b = quickButton(option, () => {
+        const choose = picked.get(q.n) !== option;
+        for (const other of row.children) other.classList.remove('selected');
+        if (choose) {
+          picked.set(q.n, option);
+          b.classList.add('selected');
+        } else {
+          picked.delete(q.n);
+        }
+        sendButton.disabled = !picked.size;
+      });
+      row.append(b);
+    }
+    q.li.append(row);
+    q.li.classList.add('has-quick-replies'); // the buttons replace the option list
+  }
+  sendRow.append(sendButton);
+  bubble.append(sendRow);
+}
+
+// ---------------------------------------------------------------- Done notice
+// A reply that finishes while this tab is in the background -- typically a
+// game build or export, which take minutes -- plays a short chime, shows a
+// browser notification (when allowed) and marks the tab's title until the
+// tab is looked at again.
+const BASE_TITLE = document.title;
+let noticeAudio = null;
+
+// Called when the user sends something that will take a while: browsers only
+// allow sound, and asking for notification permission, after a user action.
+function prepareDoneNotice(text) {
+  try {
+    noticeAudio ??= new (window.AudioContext || window.webkitAudioContext)();
+    noticeAudio.resume?.().catch(() => {});
+  } catch { /* no audio: the other two notices still work */ }
+  if (/\b(build|export|apk|exe|setup|iphone|mac)\b/i.test(text) &&'Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function chime() {
+  if (!noticeAudio) return;
+  try {
+    const t = noticeAudio.currentTime;
+    [660, 880].forEach((freq, i) => {
+      const start = t + i * 0.16;
+      const osc = noticeAudio.createOscillator();
+      const gain = noticeAudio.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
+      osc.connect(gain).connect(noticeAudio.destination);
+      osc.start(start);
+      osc.stop(start + 0.4);
+    });
+  } catch { /* sound is optional */ }
+}
+
+function notifyDone(turn) {
+  if (!document.hidden) return;
+  const message = turn.builtGameUrl ? 'Your game is ready'
+    : /\/export\/(apk|exe|msi|setup|ios|mac)\?v=/.test(turn.raw) ? 'Your app is ready to download'
+      : 'Vi has replied';
+  chime();
+  document.title = `● ${message}`;
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification(message, { body: turn.newTitle || 'Open Ask Vi Games to see it.', tag: `askvi-${turn.session}` });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+  } catch { /* notifications are optional */ }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) document.title = BASE_TITLE;
+});
 
 // ---------------------------------------------------------------- Planning feed
 // A small, muted checklist shown above the reply while the agents design or build
@@ -450,6 +649,8 @@ async function send(text, opts = {}) {
     setSavedPromptMode(false);
   }
   els.messages.querySelector('.welcome')?.remove();
+  clearQuickReplies();
+  prepareDoneNotice(text);
   addMessage('user', text);
   messages.push({ role: 'user', content: text });
   els.input.value = '';
@@ -575,7 +776,9 @@ async function send(text, opts = {}) {
     if (shown()) {
       if (turn.bubble) renderAssistantContent(turn.bubble, turn.raw);
       if (turn.builtGameUrl) appendGameLink(turn.builtGameUrl, turn.bubble);
+      if (!turn.errors.length) attachQuickReplies(turn.bubble, turn.raw);
     }
+    if (!turn.errors.length) notifyDone(turn);
   } catch (err) {
     // The connection dropped after the server took the turn: it keeps working
     // (only Stop cancels), so wait for the result instead of reporting failure.
@@ -631,6 +834,8 @@ async function loadChat(id) {
       }
       // Don't auto-open a tab just from loading/reloading the chat; only offer the link.
       if (data.gameUrl && !turn) appendGameLink(data.gameUrl, lastAssistant);
+      const last = list[list.length - 1];
+      if (!turn && last.role === 'assistant') attachQuickReplies(lastAssistant, last.content);
     }
     if (turn) attachTurn(turn);
     sidebar.refreshCache(id, { messages: list, hasGame: data.hasGame, gameUrl: data.gameUrl, title: data.title, titleAuto: data.titleAuto });
