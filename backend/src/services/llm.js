@@ -5,6 +5,8 @@
 // to connect, stream() transparently falls back to SCX, using the exact
 // same request/response shape -- callers elsewhere in the app never need to
 // know providers exist at all, and never change based on which one answers.
+const log = require('../utils/logger');
+
 const DEFAULT_MELDCX_URL = 'http://10.11.0.4:1234/v1';
 const DEFAULT_SCX_BASE_URL = 'https://api.scx.ai/v1';
 // Reasoning models spend part of max_tokens on hidden thinking; leave room for it.
@@ -163,7 +165,7 @@ function readChoice(choice) {
 // reasoning) has streamed for `idleMs`, or when no answer text has started
 // within `firstOutputMs` (a model thinking on and on without ever answering).
 // Once real answer text is flowing, only the idle check applies.
-async function attemptStream(provider, { model, system, messages, maxTokens, onText, signal, timeoutMs, stall = null }) {
+async function attemptStream(provider, { model, system, messages, maxTokens, onText, signal, timeoutMs, stall = null, noThinking = false }) {
   const timeoutSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : null;
   const stallAc = stall ? new AbortController() : null;
   const combinedSignal = AbortSignal.any([signal, timeoutSignal, stallAc?.signal].filter(Boolean));
@@ -197,15 +199,18 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
           stream: true,
           max_tokens: Math.min(maxTokens + REASONING_HEADROOM, MAX_COMPLETION),
           messages: [{ role: 'system', content: system }, ...messages],
+          // Skips a reasoning model's thinking phase on meldCX (Qwen's chat
+          // template switch) -- for simple tasks that don't need it.
+          ...(noThinking && provider.name === 'meldcx' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
         }),
       });
     } catch (err) {
       // Node/undici raises a TimeoutError (not AbortError) specifically for an
       // AbortSignal.timeout()-sourced abort -- checked for by name, not
       // instanceof, since it's a DOMException, not our own class.
-      if (stalled()) throw new Error(`${provider.name} stalled (${stallReason}) and was cancelled.`);
+      if (stalled()) throw Object.assign(new Error(`${provider.name} stalled (${stallReason}) and was cancelled.`), { timeout: true });
       if ((err.name === 'AbortError' || err.name === 'TimeoutError') && !signal?.aborted) {
-        throw new Error(`${provider.name} did not respond within ${Math.round(timeoutMs / 1000)}s and was cancelled. Try again, or try a different/faster model.`);
+        throw Object.assign(new Error(`${provider.name} did not respond within ${Math.round(timeoutMs / 1000)}s and was cancelled. Try again, or try a different/faster model.`), { timeout: true });
       }
       throw err;
     }
@@ -242,9 +247,9 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
       // partial generation (see orchestrator.js's Builder continuation loop)
       // can pick up from here instead of starting over from nothing.
       let wrapped = err;
-      if (stalled()) wrapped = new Error(`${provider.name} stalled mid-stream (${stallReason}) and was cancelled.`);
+      if (stalled()) wrapped = Object.assign(new Error(`${provider.name} stalled mid-stream (${stallReason}) and was cancelled.`), { timeout: true });
       else if ((err.name === 'AbortError' || err.name === 'TimeoutError') && !signal?.aborted) {
-        wrapped = new Error(`${provider.name} stopped responding mid-stream after ${Math.round(timeoutMs / 1000)}s and was cancelled.`);
+        wrapped = Object.assign(new Error(`${provider.name} stopped responding mid-stream after ${Math.round(timeoutMs / 1000)}s and was cancelled.`), { timeout: true });
       }
       wrapped.partialText = text;
       throw wrapped;
@@ -253,7 +258,7 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
     // Some models/servers put the whole answer in reasoning_content and leave
     // content empty -- use it rather than report an empty response.
     if (!text.trim() && reasoning.trim()) {
-      console.warn(`[llm] ${provider.name} sent only reasoning_content; using it as the response`);
+      log.warn(`[llm] ${provider.name} sent only reasoning_content; using it as the response`, { event: 'llm_reasoning_only', provider: provider.name, model });
       text = reasoning;
       onText?.(reasoning);
     }
@@ -270,13 +275,46 @@ async function attemptStream(provider, { model, system, messages, maxTokens, onT
   }
 }
 
+// One attempt against one provider, logged with how it went: provider,
+// model, duration and outcome -- never the prompt, the reply or the key.
+async function loggedAttempt(provider, opts) {
+  const started = Date.now();
+  const fields = { provider: provider.name, model: opts.model };
+  try {
+    const result = await attemptStream(provider, opts);
+    const duration = Date.now() - started;
+    log.info(`[llm] ${provider.name} answered in ${(duration / 1000).toFixed(1)}s`, {
+      event: 'llm_request_completed', ...fields, duration_ms: duration, stop_reason: result.stopReason || 'stop', output_chars: result.text.length,
+    });
+    return result;
+  } catch (err) {
+    Object.assign(fields, { duration_ms: Date.now() - started, err });
+    if (opts.signal?.aborted) log.info(`[llm] ${provider.name} request cancelled by Stop`, { event: 'llm_request_cancelled', ...fields });
+    else log.warn(`[llm] ${provider.name} request failed`, { event: 'llm_request_failed', ...fields, llm_timeout: Boolean(err.timeout), http_status: err.status });
+    throw err;
+  }
+}
+
 // Streams a chat completion. MELDCX is always tried first; only if it's
 // missing a key, unreachable, or errors does this retry once against SCX
 // (with SCX's own model, not the MELDCX one the caller passed) before
 // giving up. Resolves with the full text and the stop reason ("max_tokens"
 // when the output was cut off) -- identical shape regardless of which
 // provider actually answered.
-async function stream({ model, system, messages, maxTokens = 4096, onText, signal, timeoutMs = 120000, skipMeldcx = false }) {
+// Every failure to get an answer (no provider reachable, both failed, a
+// stream cut off) is marked `aiUnavailable`, so the chat can show a plain
+// message instead of the provider's technical error (see chatController.js).
+// Stop is not a failure and is never marked.
+async function stream(opts) {
+  try {
+    return await streamFromProviders(opts);
+  } catch (err) {
+    if (!opts.signal?.aborted && err && typeof err === 'object') err.aiUnavailable = true;
+    throw err;
+  }
+}
+
+async function streamFromProviders({ model, system, messages, maxTokens = 4096, onText, signal, timeoutMs = 120000, skipMeldcx = false, noThinking = false }) {
   const meldcx = meldcxConfig();
   const scx = scxConfig();
 
@@ -298,34 +336,34 @@ async function stream({ model, system, messages, maxTokens = 4096, onText, signa
     console.log(`[llm] provider=meldcx model=${model}`);
     try {
       console.log('bading',{model, system, messages} )
-      return await attemptStream(meldcx, { model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs, stall: STALL });
+      return await loggedAttempt(meldcx, { model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs, stall: STALL, noThinking });
     } catch (err) {
       if (signal?.aborted || emitted) throw err;
-      console.warn(`[llm] meldcx unavailable (${err.message}); falling back to provider=scx`);
+      log.warn(`[llm] meldcx unavailable (${err.message}); falling back to provider=scx`, { event: 'llm_fallback', provider: 'meldcx', model, fallback_provider: 'scx' });
     }
   } else if (!skipMeldcx) {
-    console.warn('[llm] MELDCX_API_KEY not set; falling back to provider=scx');
+    log.warn('[llm] MELDCX_API_KEY not set; falling back to provider=scx', { event: 'llm_fallback', provider: 'meldcx', model, fallback_provider: 'scx', reason: 'no_api_key' });
   }
 
   if (!scx.apiKey) {
-    throw new Error(
-      'No AI provider is available. Set MELDCX_API_KEY (and/or SCX_API_KEY as a fallback) in .env, and restart the server.',
-    );
+    const err = new Error('No AI provider is available. Set MELDCX_API_KEY (and/or SCX_API_KEY as a fallback) in .env, and restart the server.');
+    log.error('[llm] no AI provider could answer', { event: 'llm_all_providers_failed', model, err });
+    throw err;
   }
   console.log(`[llm] provider=scx model=${scx.model}`);
   for (let attempt = 1; ; attempt += 1) {
     try {
-      return await attemptStream(scx, { model: scx.model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs });
+      return await loggedAttempt(scx, { model: scx.model, system, messages, maxTokens, onText: guardedOnText, signal, timeoutMs });
     } catch (err) {
       // A brief SCX outage (rate limit / gateway / "temporarily unavailable")
       // gets one more try after a short pause -- only before any text has
       // reached the caller, and never after Stop.
       if (attempt < 2 && !signal?.aborted && !emitted && TRANSIENT_STATUS.has(err.status)) {
-        console.warn(`[llm] scx temporarily unavailable (${err.message}); retrying in ${TRANSIENT_RETRY_MS / 1000}s`);
+        log.warn(`[llm] scx temporarily unavailable (${err.message}); retrying in ${TRANSIENT_RETRY_MS / 1000}s`, { event: 'llm_retry', provider: 'scx', model: scx.model, http_status: err.status });
         await new Promise((r) => setTimeout(r, TRANSIENT_RETRY_MS));
         if (!signal?.aborted) continue;
       }
-      if (!(signal?.aborted)) console.error(`[llm] scx fallback also failed (${err.message})`);
+      if (!(signal?.aborted)) log.error(`[llm] scx fallback also failed (${err.message})`, { event: 'llm_all_providers_failed', provider: 'scx', model: scx.model, err });
       throw err;
     }
   }

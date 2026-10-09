@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Windows installer (MSI) for an exported game, built with WiX 3 (see
+  exporter.js). It installs the same single-file game .exe the EXE export
+  makes, per user (no administrator prompt) into %LocalAppData%\Programs,
+  with Start menu and desktop shortcuts, and it's listed in Settings > Apps
+  for uninstalling. A newer version of the same game upgrades the old one,
+  and the game opens as soon as the install finishes.
+  Variables (-d on the candle command line): Title, FolderName (the title
+  made safe for file names), Version, UpgradeCode, AppId, ExeName, ExePath,
+  IconPath, and Guid1..Guid3 for the components.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="$(var.Title)" Language="1033" Version="$(var.Version)" Manufacturer="Ask Vi Games" UpgradeCode="$(var.UpgradeCode)">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" Description="$(var.Title)" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="UserProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="$(var.FolderName)" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <!-- Per-user components key off HKCU values, as Windows Installer requires. -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="Game" Guid="$(var.Guid1)">
+        <File Id="GameExe" Source="$(var.ExePath)" Name="$(var.ExeName)" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\AskViGames\$(var.AppId)" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <!-- Read by the setup .exe (SetupLauncher.cs): same or newer installed means just open the game. -->
+        <RegistryValue Root="HKCU" Key="Software\AskViGames\$(var.AppId)" Name="Version" Type="string" Value="$(var.Version)" />
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="$(var.Guid2)">
+        <Shortcut Id="StartMenuShortcut" Name="$(var.FolderName)" Target="[INSTALLFOLDER]$(var.ExeName)" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\AskViGames\$(var.AppId)" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="$(var.Guid3)">
+        <Shortcut Id="DesktopShortcut" Name="$(var.FolderName)" Target="[INSTALLFOLDER]$(var.ExeName)" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\AskViGames\$(var.AppId)" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- The installer has no dialogs, so it opens the game when it's done;
+         otherwise a double-click seems to do nothing. Also on a repeat run of
+         an installed MSI, but never on uninstall or a silent (/qn) install. -->
+    <CustomAction Id="LaunchGame" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]$(var.ExeName)&quot;" Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchGame" After="InstallFinalize">NOT (REMOVE~="ALL") AND UILevel &gt; 2</Custom>
+    </InstallExecuteSequence>
+
+    <Feature Id="Main" Title="$(var.Title)" Level="1">
+      <ComponentRef Id="Game" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+  </Product>
+</Wix>

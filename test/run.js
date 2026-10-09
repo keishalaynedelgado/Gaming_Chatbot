@@ -13,6 +13,8 @@ const { staticCheck, extractFiles, isSafePath } = require('../backend/src/servic
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgres://gamechatbot:gc_app_pw_2026@127.0.0.1:5432/gamechatbot_test';
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+// The simulated outages below must not reach a real Graylog (and its alerts).
+process.env.GRAYLOG_HOST = '';
 const testDb = new Pool({ connectionString: TEST_DATABASE_URL });
 // A dedicated directory, separate from dev's own projects/ -- so test runs
 // (which freely create/delete sessions) can never collide with, or get
@@ -289,6 +291,56 @@ async function main() {
   const servedJs = await fetch(`http://127.0.0.1:${port}/games/${id}/src/game/loop.js`);
   assert.equal(servedJs.status, 200);
   assert.equal((await servedJs.text()).trim(), GOOD_LOOP.trim());
+
+  // The iPhone & Mac app (exporter.js's web export, at /play/:id/): built on
+  // request, the whole game inlined into one page that still runs it in a
+  // sandboxed iframe, with the manifest, icons and service worker it needs
+  // to install from Safari.
+  const playUrl = `http://127.0.0.1:${port}/play/${id}/`;
+  const play = await fetch(playUrl);
+  assert.equal(play.status, 200);
+  const playCsp = play.headers.get('content-security-policy');
+  assert.ok(!playCsp.includes('sandbox') && playCsp.includes("connect-src 'none'"), 'the app page needs a real origin, but no network access');
+  const playHtml = await play.text();
+  assert.ok(playHtml.includes('sandbox="allow-scripts allow-pointer-lock allow-popups allow-modals"'), 'the game itself must stay sandboxed');
+  assert.ok(playHtml.includes('rel="manifest"') && playHtml.includes('rel="apple-touch-icon"'));
+  assert.ok(playHtml.includes('function start()') && !playHtml.includes('src=&quot;./src/main.js'), 'the game must be inlined, to work offline');
+  const playManifest = await (await fetch(`${playUrl}manifest.webmanifest`)).json();
+  assert.equal(playManifest.start_url, './');
+  assert.equal(playManifest.display, 'standalone');
+  const touchIcon = Buffer.from(await (await fetch(`${playUrl}icon-180.png`)).arrayBuffer());
+  assert.equal(touchIcon.readUInt32BE(0), 0x89504e47); // PNG signature
+  const sw = await fetch(`${playUrl}sw.js`);
+  assert.equal(sw.status, 200);
+  assert.ok(sw.headers.get('content-type').startsWith('text/javascript'));
+  const bare = await fetch(`http://127.0.0.1:${port}/play/${id}`, { redirect: 'manual' });
+  assert.equal(bare.status, 301);
+  assert.equal(bare.headers.get('location'), `/play/${id}/`);
+  assert.equal((await fetch(`${playUrl}secret.txt`)).status, 404);
+
+  // The iPhone & iPad download: a profile whose Web Clip opens that page at
+  // the address the download came from (the page above is what it builds).
+  const profile = await fetch(`http://127.0.0.1:${port}/games/${id}/export/ios?v=1`);
+  assert.equal(profile.status, 200);
+  assert.equal(profile.headers.get('content-type'), 'application/x-apple-aspen-config');
+  const profileXml = await profile.text();
+  assert.ok(profileXml.includes(`<string>http://127.0.0.1:${port}/play/${id}/</string>`), 'the Web Clip must open the game where the download came from');
+  assert.ok(profileXml.includes('com.apple.webClip.managed') && /<data>\s*iVBOR/.test(profileXml), 'it must carry the PNG icon');
+
+  // The Mac download: a zipped .app whose launcher is executable (Unix mode
+  // in the zip, so Archive Utility keeps it), with the game inlined.
+  // Built right on the download, since it needs no tools: the button works
+  // even before the chat exported it.
+  const macZip = Buffer.from(await (await fetch(`http://127.0.0.1:${port}/games/${id}/export/mac?v=1`)).arrayBuffer());
+  const macEntries = {};
+  for (let p = macZip.readUInt32LE(macZip.length - 22 + 16); macZip.readUInt32LE(p) === 0x02014b50;) {
+    const nameLen = macZip.readUInt16LE(p + 28);
+    macEntries[macZip.toString('utf8', p + 46, p + 46 + nameLen)] = macZip.readUInt32LE(p + 38) >>> 16;
+    p += 46 + nameLen + macZip.readUInt16LE(p + 30) + macZip.readUInt16LE(p + 32);
+  }
+  const macApp = Object.keys(macEntries).find((n) => n.endsWith('.app/Contents/Info.plist')).replace('Info.plist', '');
+  assert.equal(macEntries[`${macApp}MacOS/game`], 0o100755, 'the launcher must be executable');
+  assert.ok(macEntries[`${macApp}Resources/main.js`] && macEntries[`${macApp}Resources/AppIcon.icns`] && macEntries[`${macApp}Resources/game/index.html`]);
   // docs/ is a sibling of frontend/, not nested inside it, so it must NOT be
   // reachable through the live-preview route (only the download zip has it).
   const gameDesignDoc = await fetch(`http://127.0.0.1:${port}/games/${id}/docs/GAME_DESIGN.md`);
@@ -392,6 +444,26 @@ async function main() {
   assert.equal((await fetch(`http://127.0.0.1:${port}/..%2fserver.js`)).status, 403);
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
 
+  // Asking for the game in plain words ("download it on my iphone") gets the
+  // download buttons straight away -- never a chat answer, which could only
+  // describe a link.
+  evts = await chat(port, id, 'can I download it on my iphone and mac?');
+  assert.ok(text(evts).includes(`[Download iPhone & iPad app](/games/${id}/export/ios?v=2)`), 'an iPhone download button');
+  assert.ok(text(evts).includes(`[Download Mac app](/games/${id}/export/mac?v=2)`), 'a Mac download button');
+  assert.ok(!text(evts).includes('Hi there!'), 'the chat model must not answer it');
+
+  // The game card's "Export app": first only the platform question, then
+  // only the chosen platform's download.
+  evts = await chat(port, id, 'Export this game');
+  assert.ok(text(evts).includes('Reply with **APK**') && text(evts).includes('**iPhone & iPad**') && text(evts).includes('**Mac**'), 'the platform question');
+  assert.ok(!text(evts).includes('/export/'), 'no download before a platform is chosen');
+  evts = await chat(port, id, 'Mac');
+  assert.ok(text(evts).includes(`[Download Mac app](/games/${id}/export/mac?v=2)`), 'the Mac download');
+  assert.ok(!/\/export\/(apk|exe|setup|ios)\?/.test(text(evts)), 'only the chosen platform');
+
+  const messageCount = (await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json()).messages.length;
+  assert.equal(messageCount, 18, 'the export exchanges are kept in the chat like any other');
+
   // ---- Sidebar list / rename / soft-delete / restore (Postgres-backed) ----
   // The database is authoritative for the sidebar now (title, recency, a
   // preview, trash), not only localStorage -- see store.js's title/
@@ -400,7 +472,9 @@ async function main() {
   let listed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json()).sessions;
   let entry = listed.find((s) => s.id === id);
   assert.ok(entry, 'a session with real activity must appear in the sidebar list');
-  assert.equal(entry.title, 'route:chat hello', 'the title must be auto-generated from the very first message');
+  // The title starts as the first message, then follows the game's name once
+  // its Game Design Summary names it (orchestrator's retitle): "**Title** Test".
+  assert.equal(entry.title, 'Test', 'the title must become the game\'s name from its design summary');
   assert.equal(entry.titleAuto, true);
   assert.ok(typeof entry.lastMessage === 'string' && entry.lastMessage.length > 0, 'lastMessage must reflect real conversation content');
   assert.equal(entry.hasGame, true);
@@ -435,7 +509,7 @@ async function main() {
   // Soft delete must not block direct access (an already-open game tab must
   // keep working) -- nothing was actually removed.
   let fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
-  assert.equal(fetched.messages.length, 12, "a soft-deleted session's messages must be completely intact");
+  assert.equal(fetched.messages.length, messageCount, "a soft-deleted session's messages must be completely intact");
   assert.equal(fetched.hasGame, true);
   assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), "a soft-deleted session's game files must be completely intact");
 
@@ -459,7 +533,7 @@ async function main() {
   trashed = (await (await fetch(`http://127.0.0.1:${port}/api/sessions?deleted=1`)).json()).sessions;
   assert.ok(!trashed.some((s) => s.id === id), 'a restored chat must disappear from the trash');
   fetched = await (await fetch(`http://127.0.0.1:${port}/api/session/${id}`)).json();
-  assert.equal(fetched.messages.length, 12, 'restore must not lose any messages');
+  assert.equal(fetched.messages.length, messageCount, 'restore must not lose any messages');
   assert.equal(fetched.hasGame, true);
   assert.equal(fetched.gameUrl, `/games/${id}/index.html?v=2`, 'restore must preserve the exact game version');
   assert.ok(await dbFileExists(id, 2, 'frontend/index.html'), 'restore must preserve the game files');

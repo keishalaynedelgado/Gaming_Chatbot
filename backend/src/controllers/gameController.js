@@ -1,10 +1,14 @@
 'use strict';
+const fs = require('node:fs');
 const path = require('node:path');
 const { json } = require('../middleware/http');
-const { MIME, GAME_CSP } = require('../config/constants');
+const log = require('../utils/logger');
+const { MIME, GAME_CSP, PLAY_CSP } = require('../config/constants');
 const store = require('../services/store');
 const qa = require('../services/qa');
 const bundler = require('../services/bundler');
+const exporter = require('../services/exporter');
+const iconDesigner = require('../services/iconDesigner');
 const { buildZip } = require('../services/zip');
 
 const ENTRY_SCRIPT_RE = /<script\s+type=["']module["']\s+src=["']([^"']+)["']\s*>\s*<\/script>/i;
@@ -42,7 +46,7 @@ async function serveFile(req, res, id, subPath) {
   if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
   const state = await store.get(id);
   let data = await store.readFrontendFile(id, state, subPath);
-  if (data === null) return json(res, 404, { error: 'No game yet' });
+  if (data === null) return json(res, 404, { error: state.hasGame ? 'Not found' : 'No game yet' });
 
   const isIndex = !subPath || subPath === 'index.html';
   if (isIndex && bundler.needsBundling(req.headers.host)) {
@@ -80,10 +84,89 @@ async function download(req, res, id) {
   const zip = buildZip(Object.entries(files).map(([filePath, content]) => ({ path: filePath, content })));
   res.writeHead(200, {
     'content-type': 'application/zip',
-    'content-disposition': `attachment; filename="game-${id.slice(0, 8)}.zip"`,
+    'content-disposition': `attachment; filename="${exporter.fileName(state)}.zip"`,
     'cache-control': 'no-store',
   });
   res.end(zip);
 }
 
-module.exports = { serveFile, download };
+// GET /games/:id/export/:format?v=N -- an exported app (APK, EXE, MSI, Setup,
+// iPhone profile or Mac zip) of that game version, built earlier from the
+// chat (see exporter.js). Named after the chat's title, e.g.
+// "Flappy-Bird.apk". The iPhone and Mac apps need no tools, so for the
+// current version they're built right here if needed (say, after the game
+// was renamed) -- their download buttons always work.
+async function downloadExport(req, res, id, format, v) {
+  if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
+  const state = await store.get(id);
+  const version = v === null ? state.gameVersion : Number(v);
+  let file = state.hasGame && Number.isInteger(version) && version >= 1 && version <= state.gameVersion
+    ? exporter.existing(id, version, format, state)
+    : null;
+  if (!file && state.hasGame && version === state.gameVersion && exporter.buildsOnRequest(format)) {
+    try {
+      const { files } = await exporter.gameFiles(id, state);
+      file = await exporter.build(format, { id, state, files, icon: await iconDesigner.savedIcon(id) });
+    } catch (err) {
+      log.error(`[export] could not build the ${format} app`, { event: 'export_failed', session_id: id, format, err });
+    }
+  }
+  if (!file) return json(res, 404, { error: 'This app has not been exported yet. Ask the chatbot to export the game again.' });
+  if (format === 'ios') {
+    // Opens the game at the address this download came from, so the iPhone
+    // that downloads it can reach it (see exporter.iosProfile).
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || (req.socket.encrypted ? 'https' : 'http');
+    const host = String(req.headers.host || '');
+    if (!/^[\w.-]+(:\d+)?$|^\[[\da-f:.]+\](:\d+)?$/i.test(host)) return json(res, 400, { error: 'Invalid host' });
+    const profile = exporter.iosProfile({ id, state, origin: `${proto === 'https' ? 'https' : 'http'}://${host}`, page: file });
+    res.writeHead(200, {
+      'content-type': exporter.FORMATS.ios.mime,
+      'content-disposition': `attachment; filename="${exporter.downloadName(state, format)}"`,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    return res.end(profile);
+  }
+  res.writeHead(200, {
+    'content-type': exporter.FORMATS[format].mime,
+    'content-disposition': `attachment; filename="${exporter.downloadName(state, format)}"`,
+    'content-length': fs.statSync(file).size,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
+// GET /play/:id/<file> -- the game's iPhone, iPad & Mac app (the web export in
+// exporter.js). Always the latest version, so an app already added to a Home
+// Screen or Dock picks up an improved game; built here on first request if
+// the chat hasn't exported it yet (with the designed icon, if there is one).
+const PLAY_FILES = new Set(['index.html', 'manifest.webmanifest', 'sw.js', 'icon-180.png', 'icon-192.png', 'icon-512.png']);
+
+async function playApp(req, res, id, name) {
+  if (!store.isValidId(id)) return json(res, 400, { error: 'Invalid session id' });
+  if (!PLAY_FILES.has(name)) return json(res, 404, { error: 'Not found' });
+  const state = await store.get(id);
+  if (!state.hasGame) return json(res, 404, { error: 'No game yet' });
+  let page = exporter.existing(id, state.gameVersion, 'web', state);
+  if (!page) {
+    try {
+      const { files } = await exporter.gameFiles(id, state);
+      page = await exporter.build('web', { id, state, files, icon: await iconDesigner.savedIcon(id) });
+    } catch (err) {
+      log.error('[play] could not build the web app', { event: 'export_failed', session_id: id, format: 'web', err });
+      return json(res, 500, { error: 'This game could not be opened as an app.' });
+    }
+  }
+  const file = exporter.webFile(page, name);
+  res.writeHead(200, {
+    'content-type': MIME[path.extname(file)],
+    'content-length': fs.statSync(file).size,
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+    ...(name === 'index.html' ? { 'content-security-policy': PLAY_CSP } : {}),
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
+module.exports = { serveFile, download, downloadExport, playApp };
