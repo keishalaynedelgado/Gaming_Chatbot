@@ -27,6 +27,20 @@ async function router(req, res, url) {
     m = pathname.match(/^\/games\/([^/]+)\/download$/);
     if (m) return gameController.download(req, res, m[1]);
 
+    m = pathname.match(/^\/games\/([^/]+)\/export\/(apk|exe|msi|setup|ios|mac)$/);
+    if (m) return gameController.downloadExport(req, res, m[1], m[2], url.searchParams.get('v'));
+
+    // The iPhone & Mac app (exporter.js) gets its own folder: it is the app's
+    // scope, and its service worker's.
+    m = pathname.match(/^\/play\/([^/]+)$/);
+    if (m) {
+      res.writeHead(301, { location: `${pathname}/${url.search}` });
+      return res.end();
+    }
+
+    m = pathname.match(/^\/play\/([^/]+)\/([^/]*)$/);
+    if (m) return gameController.playApp(req, res, m[1], m[2] || 'index.html');
+
     m = pathname.match(/^\/games\/([^/]+)\/(.*)$/);
     if (m) return gameController.serveFile(req, res, m[1], decodeURIComponent(m[2]));
 

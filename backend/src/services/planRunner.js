@@ -1,4 +1,5 @@
 'use strict';
+const log = require('../utils/logger');
 
 // Runs a build as an explicit, tracked plan: a fixed list of steps, each a
 // real action with its dependencies. Steps whose dependencies are met run in
@@ -58,7 +59,7 @@ function createPlan({ emit, steps, signal }) {
         return;
       } catch (err) {
         if (signal?.aborted) throw err;
-        console.warn(`[plan] step "${s.id}" failed (attempt ${attempt}/${attempts}): ${err.message}`);
+        log.warn(`[plan] step "${s.id}" failed (attempt ${attempt}/${attempts}): ${err.message}`, { event: 'build_step_failed', step: s.id, attempt, attempts, optional: Boolean(s.optional), err });
         if (attempt < attempts) continue;
         if (s.optional) {
           report(s, 'skipped', 'Could not complete; continuing without it');

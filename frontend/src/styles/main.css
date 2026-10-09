@@ -441,6 +441,8 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 .game-link:active { transform: translateY(1px); }
 .game-link.ghost { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font-weight: 550; }
 .game-link.ghost:hover { background: var(--surface-3); border-color: var(--border-strong); }
+button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor: pointer; }
+.export-note { display: block; margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); }
 
 /* ==========================================================================
    Planning feed
@@ -523,6 +525,23 @@ button.ghost:active, .btn.ghost:active { background: var(--surface-3); transform
 }
 .chips button:hover { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-1px); }
 .chips button:active { transform: translateY(0); }
+
+/* Answer buttons under the latest reply's questions (main.js attachQuickReplies). */
+.quick-replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.has-quick-replies > ul { display: none; } /* the buttons show the same options */
+.msg .quick-reply {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-pill); font: inherit; font-size: 13px; font-weight: 550;
+  padding: 6px 14px; cursor: pointer;
+  transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease), transform 0.1s var(--ease);
+}
+.msg .quick-reply:hover { border-color: var(--accent); background: var(--accent-soft); }
+.msg .quick-reply:active { transform: translateY(1px); }
+.msg .quick-reply:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.msg .quick-reply.selected { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.msg .quick-reply.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.msg .quick-reply.primary:hover { background: var(--accent-hover); }
+.msg .quick-reply:disabled { opacity: 0.45; cursor: default; transform: none; }
 
 /* ==========================================================================
    Status ("thinking") indicator

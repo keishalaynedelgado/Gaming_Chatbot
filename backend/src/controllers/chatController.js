@@ -1,8 +1,12 @@
 'use strict';
 const { json, readBody } = require('../middleware/http');
 const { MAX_MESSAGE } = require('../config/constants');
+const log = require('../utils/logger');
 
 const MAX_SPEC = 20000; // a saved Game Design Summary (see orchestrator.handleChat)
+// Shown instead of a provider's technical error (e.g. "scx error (503):
+// Upstream provider is unavailable") when the AI could not answer.
+const AI_UNAVAILABLE = 'The AI is temporarily unavailable. Please try again in a few minutes.';
 const HEARTBEAT_MS = 15000;
 const running = new Map(); // session id -> AbortController of its in-progress turn
 const store = require('../services/store');
@@ -26,6 +30,7 @@ async function postChat(req, res) {
   const maxMessage = spec ? MAX_SPEC : MAX_MESSAGE;
   if (message.length > maxMessage) return json(res, 400, { error: `Message is limited to ${maxMessage} characters` });
 
+  log.setContext({ session_id: body.sessionId }); // every log line of this turn carries it
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
@@ -40,7 +45,7 @@ async function postChat(req, res) {
   const ids = new Set([body.sessionId]);
   running.set(body.sessionId, ac);
   const emit = (evt) => {
-    if (evt.type === 'session') { ids.add(evt.id); running.set(evt.id, ac); } // Stop works on the new chat too
+    if (evt.type === 'session') { ids.add(evt.id); running.set(evt.id, ac); log.setContext({ session_id: evt.id }); } // Stop works on the new chat too
     if (ac.signal.aborted) return; // after Stop, nothing more is sent
     if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(evt)}\n\n`);
   };
@@ -57,7 +62,7 @@ async function postChat(req, res) {
     if (!res.writableEnded && !res.destroyed) res.end();
   });
   res.on('close', () => {
-    if (!res.writableEnded && !ac.signal.aborted) console.warn(`[chat] client disconnected from ${body.sessionId}; finishing the turn in the background`);
+    if (!res.writableEnded && !ac.signal.aborted) log.warn(`[chat] client disconnected from ${body.sessionId}; finishing the turn in the background`, { event: 'chat_client_disconnected' });
   });
 
   try {
@@ -71,8 +76,9 @@ async function postChat(req, res) {
     emit({ type: 'done' });
   } catch (err) {
     if (!ac.signal.aborted) {
-      console.error(err);
-      emit({ type: 'error', message: err.message || 'Something went wrong.' });
+      console.error(err); // the technical detail stays in the server log
+      log.error('[chat] turn failed', { event: 'chat_turn_failed', ai_unavailable: Boolean(err.aiUnavailable), err });
+      emit({ type: 'error', message: err.aiUnavailable ? AI_UNAVAILABLE : err.message || 'Something went wrong.' });
     }
   } finally {
     clearInterval(heartbeat);
