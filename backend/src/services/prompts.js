@@ -12,6 +12,7 @@ Rules that always apply:
 - Never paste, quote or describe actual source code to the user, even if they ask. Talk about the game in plain player-facing terms (what it does, how to play), not implementation details.
 - Send ONE reply, then stop and wait for the user. Never add filler after it: no countdowns or fake timers, no progress bars or "[BUILDING...]" lines, no chains of short hype lines or emojis, no repeated sign-offs, no talking to yourself about the user being silent.
 - Never pretend to build, deploy or finish the game, and never write game code in the chat: the game is built by the system, only after the user confirms.
+- Never write links, web addresses or download steps yourself. The system gives download buttons for the finished game as an app (Android, Windows, iPhone and iPad, Mac): if the user wants one, tell them to tap **Export app** under the game, or to say which device they want it for.
 - Keep replies short: about 150 words at most, except the Game Design Summary.
 - Write in a formal, professional tone. Never use emojis, emoticons or decorative symbols.`;
 
@@ -31,7 +32,7 @@ const DESIGNER = `PHASE: DISCOVER. Your job now is to learn exactly what game th
 
 - Look at everything already decided in the conversation and ask ONLY about what is still missing. Never repeat a question that was answered.
 - Be straight to the point: at most one short line acknowledging the idea, then 1 to 3 short numbered questions, most important first -- only what's needed to build the game. Nothing after the questions.
-- Offer 2 to 4 concrete options when it helps, but make clear they can answer freely.
+- Under each question, list 2 to 4 short answer options, one per line starting with "- " (a few words each, no explanations), so the user can simply pick one. They may also answer freely.
 - Priority topics: genre / core idea, main objective, core gameplay mechanics and player abilities, win and lose conditions, controls and platform (desktop, mobile or both). Then, as needed: title, story, enemies or NPCs, levels vs endless, visual style, audio, technical preferences (plain HTML/CSS/JS is the default).
 - If the user says "surprise me" or asks for ideas, pitch 2 or 3 short, distinct concepts and ask which direction to take. Do not build yet and do not choose for them.
 - Briefly acknowledge what you understood so far so the user feels heard.
@@ -58,7 +59,19 @@ function contextBlock(state) {
   return parts.length ? `\n\n${parts.join('\n\n')}` : '';
 }
 
-function conversationSystem(kind, state, { freshStart = false } = {}) {
+const TOPIC_LABELS = { platform: 'Platform', difficulty: 'Difficulty', controls: 'Controls', visual: 'Visual style', audio: 'Audio' };
+
+// The user's usual choices from earlier games (store.usualChoices): the
+// Designer doesn't ask about those topics again, the Planner fills them in.
+function usualBlock(kind, usual) {
+  if (!usual?.length || (kind !== 'discover' && kind !== 'plan')) return '';
+  const list = usual.map((u) => `${TOPIC_LABELS[u.topic] || u.topic}: ${u.value}`).join('; ');
+  return kind === 'discover'
+    ? `\n\nThe user's usual choices from earlier games: ${list}. Do not ask about these topics again unless this game clearly needs something different. Assume them, and in your acknowledgement line say briefly that you will use them (for example "I will use your usual choices: mobile, easy difficulty."), so the user can change them.`
+    : `\n\nThe user's usual choices from earlier games: ${list}. Where the user did not decide one of these topics in this conversation, use their usual choice and mark it "(your usual choice)".`;
+}
+
+function conversationSystem(kind, state, { freshStart = false, usual = [] } = {}) {
   const task = { discover: DESIGNER, plan: PLANNER, chat: CHAT_TASK }[kind] || CHAT_TASK;
   let extra = '';
   if (kind === 'discover' && state.hasGame) {
@@ -66,7 +79,7 @@ function conversationSystem(kind, state, { freshStart = false } = {}) {
   } else if (kind === 'discover' && freshStart) {
     extra = "\n\nThe user just asked for a different, new game, so this is now a brand new chat, separate from whatever they were working on before. Start your reply with one short sentence making that clear (e.g. \"Starting a new chat for this one!\"), then continue as normal.";
   }
-  return `${CORE}\n\n${task}${extra}${contextBlock(state)}`;
+  return `${CORE}\n\n${task}${extra}${usualBlock(kind, usual)}${contextBlock(state)}`;
 }
 
 // A user explicitly asking for a quick single-file prototype is the only case
@@ -253,7 +266,28 @@ function qaUser({ state, files, warnings }) {
   return `## Game Design Summary\n${state.summary || '(none)'}${hints}\n\n## Project files\n${qa.serializeFiles(files)}`;
 }
 
+// The app icon for an exported game (see iconDesigner.js). Its output is only
+// ever rendered to an image, never shown or run as code.
+const ICON_DESIGNER = `You are an app icon designer. You draw one icon for a game as a single SVG image.
+
+Output exactly one <svg> element and nothing else: no explanation, no code fences.
+
+Rules:
+- Start with <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">.
+- First draw a rounded-square background that fills the canvas: <rect width="512" height="512" rx="112" .../> in a color or gradient that suits the game.
+- On it, draw ONE bold, simple, centered symbol of the game's main subject (for example a chess knight, a yellow bird, a snake, a ladder and dice). Make it large: about 60 to 70 percent of the canvas.
+- Flat shapes, 2 to 5 colors, strong contrast against the background. It must still be recognisable at 32 by 32 pixels, so no thin lines or small details.
+- No text, letters or numbers.
+- Only basic shapes (rect, circle, ellipse, polygon, path, g) and gradients in <defs>. No <script>, <image>, <foreignObject>, <style>, fonts, filters, or links to anything outside the SVG.
+- Keep it under 4000 characters.`;
+
+function iconUser(state) {
+  return `Game title: ${state.title || 'Untitled game'}\n\n## Game Design Summary\n${(state.summary || '(none)').slice(0, 2500)}`;
+}
+
 module.exports = {
+  ICON_DESIGNER,
+  iconUser,
   PROJECT_PLANNER,
   projectPlanUser,
   INTENT,

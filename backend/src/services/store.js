@@ -17,6 +17,28 @@ function versionDir(id, version) {
   return path.join(PROJECTS_ROOT, id, `v${version}`);
 }
 
+// The game's real name from its Game Design Summary ("**Title:** Chess
+// Master (default, tell me if you'd like to change it)" -> "Chess Master").
+function summaryTitle(summary) {
+  const m = String(summary || '').match(/\*\*Title:?\*\*:?\s*([^\n]+)/i);
+  if (!m) return null;
+  const title = m[1].replace(/\((?:default|inferred)[^)]*\)/gi, '').replace(/[*_`]/g, '').trim().replace(/[.\s]+$/, '');
+  return title && title.length <= 80 ? title : null;
+}
+
+// The name to show for a game: the user's own rename always wins, then the
+// game's real name, then the chat's automatic title.
+function displayTitle(state) {
+  return (state.titleAuto === false && state.title) || summaryTitle(state.summary) || state.title || 'Game';
+}
+
+// Where a version's exported apps (APK/EXE, see exporter.js) are kept --
+// beside the version folders, never inside them, so they're not part of the
+// project the Builder reads back.
+function exportDir(id, version) {
+  return path.join(PROJECTS_ROOT, id, 'exports', `v${version}`);
+}
+
 const ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 // One process, one source of truth: this cache holds the SAME state object a
 // caller mutates in place across a turn (messages pushed, summary set, ...),
@@ -280,9 +302,30 @@ async function listBuiltGames() {
 
 // Saves a prompt the user wrote as a finalized, build-ready spec. Saving the
 // exact same text again just returns the existing one.
+// ------------------------------------------------------------ Preferences
+// The user's answers to general setup questions (see orchestrator's
+// recordAnswers). Their "usual choice" per topic is the answer given most
+// often among the last 5 on that topic; a tie goes to the most recent.
+async function recordPreference(topic, value) {
+  await db.query('INSERT INTO preference_answers (topic, value) VALUES ($1, $2)', [topic, value]);
+}
+
+async function usualChoices() {
+  const { rows } = await db.query(`
+    WITH recent AS (
+      SELECT topic, value, created_at, row_number() OVER (PARTITION BY topic ORDER BY created_at DESC) AS rn
+      FROM preference_answers
+    ), counted AS (
+      SELECT topic, lower(value) AS key, max(value) AS value, count(*) AS n, max(created_at) AS last
+      FROM recent WHERE rn <= 5 GROUP BY topic, lower(value)
+    )
+    SELECT DISTINCT ON (topic) topic, value FROM counted ORDER BY topic, n DESC, last DESC`);
+  return rows.map((r) => ({ topic: r.topic, value: r.value }));
+}
+
 // The prompt text is stored exactly as written. Saving the same text again
 // updates that entry's name and options instead of adding a duplicate.
-const SAVED_PROMPT_COLS = 'id, title, prompt, type, run_auto, show_on_home, created_at';
+const SAVED_PROMPT_COLS ='id, title, prompt, type, run_auto, show_on_home, created_at';
 async function createSavedPrompt({ name, prompt, type = 'any', runAuto = false, showOnHome = false }) {
   const title = (name || '').trim() || promptTitle(prompt);
   const id = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -411,6 +454,11 @@ module.exports = {
   saveProject,
   readProjectFiles,
   readFrontendFile,
+  exportDir,
+  summaryTitle,
+  displayTitle,
+  recordPreference,
+  usualChoices,
   listSessions,
   renameSession,
   softDeleteSession,

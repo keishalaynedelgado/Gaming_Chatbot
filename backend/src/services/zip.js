@@ -27,23 +27,26 @@ function dosDateTime(date) {
   return { time, day };
 }
 
-// files: [{ path, content: string|Buffer }]. Returns a Buffer containing a
-// valid, uncompressed (STORED) .zip archive.
+// files: [{ path, content: string|Buffer, mode? }]. Returns a Buffer
+// containing a valid, uncompressed (STORED) .zip archive. `mode` (Unix
+// permissions, e.g. 0o100755) is recorded so macOS's Archive Utility keeps a
+// file executable -- the Mac app's launcher needs it (see exporter.js).
 function buildZip(files) {
   const { time, day } = dosDateTime(new Date());
   const localParts = [];
   const centralParts = [];
   let offset = 0;
 
-  for (const { path: name, content } of files) {
+  for (const { path: name, content, mode } of files) {
     const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
     const nameBuf = Buffer.from(name.replace(/\\/g, '/'), 'utf8');
     const crc = crc32(data);
+    const flags = /[^\x00-\x7f]/.test(name) ? 0x0800 : 0; // UTF-8 file name
 
     const lfh = Buffer.alloc(30);
     lfh.writeUInt32LE(0x04034b50, 0);
     lfh.writeUInt16LE(20, 4); // version needed
-    lfh.writeUInt16LE(0, 6); // flags
+    lfh.writeUInt16LE(flags, 6);
     lfh.writeUInt16LE(0, 8); // method: stored
     lfh.writeUInt16LE(time, 10);
     lfh.writeUInt16LE(day, 12);
@@ -56,9 +59,9 @@ function buildZip(files) {
 
     const cdh = Buffer.alloc(46);
     cdh.writeUInt32LE(0x02014b50, 0);
-    cdh.writeUInt16LE(20, 4); // version made by
+    cdh.writeUInt16LE(mode ? 0x0314 : 20, 4); // version made by (0x03xx: Unix, so the mode below counts)
     cdh.writeUInt16LE(20, 6); // version needed
-    cdh.writeUInt16LE(0, 8); // flags
+    cdh.writeUInt16LE(flags, 8);
     cdh.writeUInt16LE(0, 10); // method
     cdh.writeUInt16LE(time, 12);
     cdh.writeUInt16LE(day, 14);
@@ -70,7 +73,7 @@ function buildZip(files) {
     cdh.writeUInt16LE(0, 32); // comment length
     cdh.writeUInt16LE(0, 34); // disk number start
     cdh.writeUInt16LE(0, 36); // internal attrs
-    cdh.writeUInt32LE(0, 38); // external attrs
+    cdh.writeUInt32LE(mode ? (mode << 16) >>> 0 : 0, 38); // external attrs
     cdh.writeUInt32LE(offset, 42); // offset of local header
     centralParts.push(cdh, nameBuf);
 
@@ -92,4 +95,4 @@ function buildZip(files) {
   return Buffer.concat([...localParts, central, eocd]);
 }
 
-module.exports = { buildZip };
+module.exports = { buildZip, crc32 };
