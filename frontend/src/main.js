@@ -30,12 +30,14 @@ const MAX_SAVED_PROMPT_LEN = 20000; // matches the server's saved-prompt limit
 let savedPromptMode = false;
 let savedPromptType = null; // the saved prompt's Type, sent along as a Builder hint
 let savedPromptId = null; // the user's saved prompt being built, linked to the finished game
+let savedPromptGame = null; // { session, spec }: its already-built game, opened instead of rebuilt if sent unedited
 let savedPromptsCache = []; // latest Saved prompts list, for the New Chat screen's cards
 
-function setSavedPromptMode(on, title = '', type = null, id = null) {
+function setSavedPromptMode(on, title = '', type = null, id = null, game = null) {
   savedPromptMode = on;
   savedPromptType = on ? type : null;
   savedPromptId = on ? id : null;
+  savedPromptGame = on ? game : null;
   els.savedChip.hidden = !on;
   els.savedChipTitle.textContent = on && title ? `: ${title}` : '';
   els.input.maxLength = on ? MAX_SAVED_PROMPT_LEN : MAX_MESSAGE_LEN;
@@ -645,7 +647,8 @@ async function send(text, opts = {}) {
   text = text.trim();
   if (!text || currentTurn()) return; // this chat already has a reply generating
   if (savedPromptMode) {
-    opts = { ...opts, spec: text, promptType: savedPromptType, savedPromptId };
+    const loadGame = savedPromptGame && savedPromptGame.spec.trim() === text ? savedPromptGame.session : null;
+    opts = { ...opts, spec: text, promptType: savedPromptType, savedPromptId, loadGame };
     setSavedPromptMode(false);
   }
   els.messages.querySelector('.welcome')?.remove();
@@ -955,19 +958,24 @@ els.savePrompt.addEventListener('click', () => openSavePromptModal(savedPromptMo
 function useSavedPrompt(p) {
   startNewDraft(); // its own new chat -- fine even while other chats are busy
   els.input.value = p.spec;
-  setSavedPromptMode(true, p.title, p.type, p.custom ? p.id : null);
+  setSavedPromptMode(true, p.title, p.type, p.custom ? p.id : null, p.gameSession ? { session: p.gameSession, spec: p.spec } : null);
   autoGrow();
   els.input.focus();
   els.input.setSelectionRange(0, 0);
   els.input.scrollTop = 0;
 }
 
-// "Show on the New Chat screen" prompts, as cards under the welcome message.
+// Saved prompts as cards under the welcome message: the "Show on the New Chat
+// screen" ones first, then the most recent other prompts and built games
+// (the list is already newest first) to fill the grid.
+const WELCOME_SAVED_MAX = 6;
 function renderWelcomeSavedPrompts() {
   const box = els.messages.querySelector('.welcome');
   if (!box) return;
   box.querySelector('.welcome-saved')?.remove();
-  const shown = savedPromptsCache.filter((p) => p.showOnHome);
+  const pinned = savedPromptsCache.filter((p) => p.showOnHome);
+  const rest = savedPromptsCache.filter((p) => !p.showOnHome);
+  const shown = [...pinned, ...rest].slice(0, WELCOME_SAVED_MAX);
   if (!shown.length) return;
   const section = document.createElement('div');
   section.className = 'welcome-saved';
@@ -976,20 +984,31 @@ function renderWelcomeSavedPrompts() {
   head.textContent = 'Saved game prompts';
   const grid = document.createElement('div');
   grid.className = 'welcome-saved-grid';
-  for (const p of shown.slice(0, 6)) {
+  for (const p of shown) {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'welcome-saved-card';
+    const top = document.createElement('span');
+    top.className = 'welcome-saved-top';
     const title = document.createElement('span');
     title.className = 'welcome-saved-title';
     title.textContent = p.title;
+    top.appendChild(title);
+    if (p.type && p.type !== 'any') {
+      const tag = document.createElement('span');
+      tag.className = 'welcome-saved-tag';
+      tag.textContent = p.type;
+      top.appendChild(tag);
+    }
     const body = document.createElement('span');
     body.className = 'welcome-saved-body';
-    body.textContent = p.spec.replace(/[*_#]/g, '').replace(/\s+/g, ' ').trim();
+    // Drop the "Title: X" line the card already shows as its heading.
+    body.textContent = p.spec.replace(/[*_#]/g, '').replace(/^[ \t]*Title:[^\n]*\n?/im, '').replace(/\s+/g, ' ').trim();
     const meta = document.createElement('span');
-    meta.className = 'welcome-saved-meta';
-    meta.textContent = '⚡ Builds on Send';
-    card.append(title, body, meta);
+    // Already built (see store.listSavedPrompts): Send loads that game instead of rebuilding it.
+    meta.className = p.gameSession ? 'welcome-saved-meta is-ready' : 'welcome-saved-meta';
+    meta.textContent = p.gameSession ? '▶ Ready to play — opens on Send' : '⚡ Builds on Send';
+    card.append(top, body, meta);
     card.addEventListener('click', () => useSavedPrompt(p));
     grid.appendChild(card);
   }

@@ -864,12 +864,19 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font-weight: 400;
 }
 .welcome .welcome-saved-card:hover { border-color: var(--accent); background: var(--surface-2); transform: translateY(-1px); box-shadow: var(--shadow-md); }
-.welcome-saved-title { font-size: 14.5px; font-weight: 750; }
+.welcome-saved-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.welcome-saved-title { font-size: 14.5px; font-weight: 750; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.welcome-saved-tag {
+  flex-shrink: 0; margin-left: auto; padding: 2px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 700; text-transform: capitalize;
+  color: var(--accent); border: 1px solid var(--border);
+}
 .welcome-saved-body {
   font-size: 12.5px; line-height: 1.45; color: var(--text-secondary);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .welcome-saved-meta { font-size: 11.5px; color: var(--text-tertiary); margin-top: auto; }
+.welcome-saved-meta.is-ready { color: var(--success); }
 .welcome:has(.welcome-saved) { max-width: 760px; }
 
 /* Tracked build plan (main.js planTrack): all steps shown up front. */
