@@ -3,5 +3,3 @@ node_modules/
 projects/
 projects_test/
 curl.txt
-playwright-report/
-test-results/
