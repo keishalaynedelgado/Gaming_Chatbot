@@ -46,6 +46,15 @@ function readLegacyPins() {
 // database is the source (GET /api/saved-prompts); localStorage only caches
 // the last list so it paints instantly. Picking one loads it into the
 // composer, and sending it builds straight away: no questions, no confirmation.
+// Line icons for the chat list's buttons (styled in main.css).
+const svgIcon = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+const ICONS = {
+  pin: svgIcon('<path class="fillable" d="M9 3.5h6l-1.2 5.6 3.4 3.3v2.1H6.8v-2.1l3.4-3.3z"/><path d="M12 14.5v6"/>'),
+  pencil: svgIcon('<path d="M4 20h4L19.2 8.8a2.3 2.3 0 0 0-3.3-3.3L4.7 16.7z"/><path d="M14.2 7.2l3.3 3.3"/>'),
+  trash: svgIcon('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4.5h6V7"/>'),
+  restore: svgIcon('<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/>'),
+};
+
 const PROMPTS_KEY = 'gc_saved_prompts';
 const TAB_KEY = 'gc_sidebar_tab';
 const PROMPT_TITLE_MAX = 48;
@@ -53,6 +62,52 @@ const PROMPT_TITLE_MAX = 48;
 function titleOf(text) {
   const firstLine = (text || '').trim().split('\n')[0].replace(/\s+/g, ' ');
   return firstLine.length > PROMPT_TITLE_MAX ? `${firstLine.slice(0, PROMPT_TITLE_MAX)}…` : firstLine;
+}
+
+// A saved game's name for the list, without the leftovers a title taken from
+// the chat can carry: leading dashes, "(or let me know if…)" asides, and a
+// "Create a …" request phrasing.
+function cleanPromptTitle(text) {
+  let t = (text || '').trim().split('\n')[0];
+  t = t.replace(/^[\s\-–—:•*#]+/, '');
+  t = t.replace(/\s*\((?:or |let me know|tell me|feel free)[^)]*\)?/i, '');
+  t = t.replace(/^(?:please\s+)?(?:create|make|build|design)\s+(?:me\s+)?(?:a|an|the)?\s*/i, '');
+  t = t.trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : (text || '').trim();
+}
+
+// Genre groups for the Saved prompts tab, in display order. A prompt saved
+// with a specific type uses it; otherwise the genre is read from the design's
+// "Genre" line, or failing that from the title and request. First match wins,
+// so "arcade racing" is Racing and "board game / strategy" is Board & card.
+const GENRES = [
+  { id: 'arcade', label: 'Arcade', re: /arcade|endless|catch|dodge|flappy|collect/ },
+  { id: 'platformer', label: 'Platformer & runner', short: 'Platformer', re: /platform|side-?scroll|runner|jump|mario/ },
+  { id: 'racing', label: 'Racing', re: /racing|race car|kart|driving/ },
+  { id: 'shooter', label: 'Shooter', re: /shoot|invader|space defen[cs]e/ },
+  { id: 'puzzle', label: 'Puzzle', re: /puzzle|match-?3|sudoku|tetris|memory|word game/ },
+  { id: 'board', label: 'Board & card', short: 'Board game', re: /board game|chess|checkers|snakes? and ladders?|ludo|card game|tic-?tac/ },
+  { id: 'strategy', label: 'Strategy', re: /strategy|tactic|tower defen[cs]e/ },
+  { id: 'other', label: 'Other', re: null },
+];
+// short: the compact name for tags (the welcome cards); otherwise the group heading.
+const genreLabelOf = (id, short = false) => {
+  const g = GENRES.find((x) => x.id === id) || GENRES[GENRES.length - 1];
+  return (short && g.short) || g.label;
+};
+const MATCH_ORDER = ['board', 'racing', 'shooter', 'platformer', 'puzzle', 'strategy', 'arcade'];
+
+function genreOf(p) {
+  if (p.type && GENRES.some((g) => g.id === p.type && g.id !== 'other')) return p.type;
+  const genreLine = (p.spec || p.request || '').match(/genre[^\n]*/i)?.[0] || '';
+  const fallback = `${p.title || ''}\n${(p.request || '').slice(0, 400)}`;
+  for (const text of [genreLine, fallback]) {
+    const t = text.toLowerCase();
+    if (!t.trim()) continue;
+    const hit = MATCH_ORDER.find((id) => GENRES.find((g) => g.id === id).re.test(t));
+    if (hit) return hit;
+  }
+  return 'other';
 }
 
 function readJson(key, fallback) {
@@ -376,8 +431,13 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     const input = document.createElement('input');
     input.className = 'chat-item-rename';
     input.value = chat.title;
+    input.maxLength = 120;
     input.setAttribute('aria-label', 'Rename chat');
     titleEl.replaceWith(input);
+    // While renaming, the line under the box shows the keys instead of the preview.
+    li.classList.add('is-renaming');
+    const meta = li.querySelector('.chat-item-meta');
+    if (meta) meta.innerHTML = '<kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel';
     input.focus();
     input.select();
 
@@ -410,12 +470,13 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
   }
 
   function confirmDelete(chat) {
-    return window.confirm(`Delete "${chat.title}"? You can restore it later from Recently deleted.`);
+    const pinnedNote = isPinned(chat) ? ' It is pinned, so it will also leave your Pinned chats.' : '';
+    return window.confirm(`Delete "${chat.title}"?${pinnedNote} You can restore it later from Recently deleted.`);
   }
 
   // ---- Delete (soft) / Restore ----
+  // Pinned chats can be deleted too; confirmDelete() warns that they're pinned.
   async function deleteChat(id) {
-    if (isPinned(store.chats.find((c) => c.id === id))) return; // pinned chats can't be deleted -- unpin first
     const removed = store.chats.find((c) => c.id === id);
     const removedIndex = store.chats.indexOf(removed);
     const wasActive = store.activeChatId === id;
@@ -509,7 +570,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     restoreBtn.className = 'chat-item-action';
     restoreBtn.title = 'Restore';
     restoreBtn.setAttribute('aria-label', 'Restore chat');
-    restoreBtn.textContent = '↺';
+    restoreBtn.innerHTML = ICONS.restore;
     restoreBtn.addEventListener('click', () => restoreChat(chat.id));
     actions.appendChild(restoreBtn);
 
@@ -527,9 +588,17 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     main.className = 'chat-item-main';
     main.setAttribute('aria-current', chat.id === active ? 'true' : 'false');
 
+    const pinnedChat = isPinned(chat);
     const title = document.createElement('span');
     title.className = 'chat-item-title';
     title.textContent = chat.title || 'New chat';
+    if (pinnedChat) {
+      const mark = document.createElement('span');
+      mark.className = 'pin-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.innerHTML = ICONS.pin;
+      title.prepend(mark);
+    }
 
     const meta = document.createElement('span');
     meta.className = 'chat-item-meta';
@@ -543,21 +612,20 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     const actions = document.createElement('span');
     actions.className = 'chat-item-actions';
 
-    const pinnedChat = isPinned(chat);
     const pinBtn = document.createElement('button');
     pinBtn.type = 'button';
     pinBtn.className = `chat-item-action pin-btn${pinnedChat ? ' pinned' : ''}`;
     pinBtn.title = pinnedChat ? 'Unpin' : 'Pin';
     pinBtn.setAttribute('aria-label', pinnedChat ? 'Unpin chat' : 'Pin chat');
-    pinBtn.textContent = '📌';
+    pinBtn.innerHTML = ICONS.pin;
     pinBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePin(chat.id); });
 
     const renameBtn = document.createElement('button');
     renameBtn.type = 'button';
-    renameBtn.className = 'chat-item-action';
+    renameBtn.className = 'chat-item-action rename-btn';
     renameBtn.title = 'Rename';
     renameBtn.setAttribute('aria-label', 'Rename chat');
-    renameBtn.textContent = '✎';
+    renameBtn.innerHTML = ICONS.pencil;
     renameBtn.addEventListener('click', (e) => { e.stopPropagation(); startRename(li, chat); });
 
     const deleteBtn = document.createElement('button');
@@ -565,15 +633,13 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     deleteBtn.className = 'chat-item-action danger';
     deleteBtn.title = 'Delete';
     deleteBtn.setAttribute('aria-label', 'Delete chat');
-    deleteBtn.textContent = '🗑';
+    deleteBtn.innerHTML = ICONS.trash;
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (confirmDelete(chat)) deleteChat(chat.id);
     });
 
-    // Pinned chats are protected: no delete until they're unpinned.
-    actions.append(pinBtn, renameBtn);
-    if (!pinnedChat) actions.append(deleteBtn);
+    actions.append(pinBtn, renameBtn, deleteBtn);
     li.append(main, actions);
     return li;
   }
@@ -581,8 +647,9 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
   function appendGroup(label, chats, active) {
     if (!chats.length) return;
     const header = document.createElement('li');
-    header.className = 'chat-group-header';
-    header.textContent = label;
+    header.className = label === 'Pinned' ? 'chat-group-header is-pinned' : 'chat-group-header';
+    if (label === 'Pinned') header.innerHTML = `<span class="pin-mark" aria-hidden="true">${ICONS.pin}</span>`;
+    header.append(label);
     els.list.appendChild(header);
     for (const chat of chats) els.list.appendChild(buildChatItem(chat, active));
   }
@@ -643,13 +710,20 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     const main = document.createElement('button');
     main.type = 'button';
     main.className = 'chat-item-main';
-    main.title = `Load "${prompt.title}" into the chat box — Send builds it right away`;
+    const name = cleanPromptTitle(prompt.title);
+    const ready = !!prompt.gameSession;
+    main.title = ready
+      ? `Load "${name}" — the game is already built and opens on Send`
+      : `Load "${name}" into the chat box — Send builds it right away`;
     const title = document.createElement('span');
     title.className = 'chat-item-title';
-    title.textContent = titleOf(prompt.title);
+    title.textContent = titleOf(name);
     const meta = document.createElement('span');
     meta.className = 'chat-item-meta';
-    meta.textContent = `⚡ Builds on Send · ${formatWhen(prompt.savedAt)}`;
+    const status = document.createElement('span');
+    status.className = ready ? 'prompt-status is-ready' : 'prompt-status';
+    status.textContent = ready ? '▶ Ready to play' : '⚡ Builds on Send';
+    meta.append(status, ` · ${formatWhen(prompt.savedAt)}`);
     main.append(title, meta);
     main.addEventListener('click', () => pickPrompt(prompt));
 
@@ -668,7 +742,10 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
     els.list.appendChild(newLi);
 
     const needle = filter.toLowerCase();
-    const shown = prompts.filter((p) => !needle || `${p.title}\n${p.request}`.toLowerCase().includes(needle));
+    const genreLabel = (id) => GENRES.find((g) => g.id === id).label;
+    const shown = prompts
+      .map((p) => ({ p, genre: genreOf(p) }))
+      .filter(({ p, genre }) => !needle || `${p.title}\n${p.request}\n${genreLabel(genre)}`.toLowerCase().includes(needle));
     if (!shown.length) {
       const empty = document.createElement('li');
       empty.className = 'chat-list-empty';
@@ -676,7 +753,20 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
       els.list.appendChild(empty);
       return;
     }
-    for (const p of shown) els.list.appendChild(buildPromptItem(p));
+    // One group per genre (newest first inside each), in GENRES order.
+    for (const g of GENRES) {
+      const items = shown.filter((x) => x.genre === g.id);
+      if (!items.length) continue;
+      const header = document.createElement('li');
+      header.className = 'chat-group-header prompt-group-header';
+      header.append(g.label);
+      const count = document.createElement('span');
+      count.className = 'prompt-group-count';
+      count.textContent = String(items.length);
+      header.appendChild(count);
+      els.list.appendChild(header);
+      for (const { p } of items) els.list.appendChild(buildPromptItem(p));
+    }
   }
 
   function render() {
@@ -876,4 +966,4 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
   };
 }
 
-export { initSidebar };
+export { initSidebar, genreOf, genreLabelOf, cleanPromptTitle };

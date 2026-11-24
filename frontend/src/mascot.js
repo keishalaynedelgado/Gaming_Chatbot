@@ -1,11 +1,7 @@
 'use strict';
-// Vi, the floating owl mascot, drawn from the pose set in assets/vi/.
-//
-// The pose images don't need to share a canvas: each file is measured once
-// (the bounding box of its opaque pixels) and every bird is then drawn at the
-// same pixel scale, horizontally centered, feet on one shared baseline, inside
-// one common stage sized to fit the largest pose. So a pose with more or less
-// empty padding around the bird never makes Vi grow, shrink or jump.
+// The floating K Games dragon mascot, drawn from the inline SVG poses in
+// dragon.js. Every pose shares one canvas with the feet on the same baseline,
+// so a pose swap never makes the dragon grow, shrink or jump.
 //
 // Motion is split in layers so nothing fights: CSS owns the always-on idle
 // motion (bob + sway on .mascot-float, breathing via the `scale` property on
@@ -14,34 +10,9 @@
 // Animations pose swap on .mascot-art's `transform`. The loop only runs while
 // something is moving, and mascots removed from the DOM drop out.
 
-const POSE_URLS = Array.from({ length: 9 }, (_, i) => new URL(`./assets/vi/pose-${i + 1}.png`, import.meta.url).href);
-const DEFAULT_POSE = 0; // front-facing
-const STAGE_PAD = 4; // source px of headroom kept around the largest pose
-// The front pose's bird fills this share of the stage's height, whatever the
-// pose set -- so Vi stays the same on-screen size even when a set has wide
-// props (a racing wheel, spread wings) that would otherwise shrink the stage.
-const DEFAULT_BIRD_HEIGHT_SHARE = 0.917;
-const STAGE_ASPECT = 420 / 412; // width / height
+import { POSES, dragonSvg, newDragonId } from './dragon.js';
 
-// Eyes per pose: [x0, y0, x1, y1] around each iris, in source pixels measured
-// from the top-left of the bird itself (not the image edge, so re-cropped or
-// re-padded images still line up), plus the face color around them. Eyelids
-// in that color close over the eyes to blink; the back views have no eyes.
-// Gamer set: controller, headset, handheld, Game Boy, joystick, racing wheel
-// (back view), VR headset, arcade stick, chips. No blink where no eyes show:
-// the back view, the VR headset and the eyes-shut chips pose.
-const EYES = [
-  { lid: 'rgb(137,160,193)', eyes: [[34, 44, 41, 55], [61, 42, 68, 55]] },
-  { lid: 'rgb(131,157,191)', eyes: [[46, 44, 55, 56]] },
-  { lid: 'rgb(139,164,197)', eyes: [[45, 46, 51, 56], [66, 44, 75, 57]] },
-  { lid: 'rgb(132,157,194)', eyes: [[26, 40, 33, 50], [52, 39, 59, 50]] },
-  { lid: 'rgb(131,157,194)', eyes: [[41, 39, 48, 50]] },
-  { lid: null, eyes: [] },
-  { lid: null, eyes: [] },
-  { lid: 'rgb(152,174,205)', eyes: [[43, 41, 50, 49]] },
-  { lid: null, eyes: [] },
-];
-const LID_PAD = 2; // px beyond the iris, so the lid also covers the white of the eye
+const DEFAULT_POSE = 0; // front-facing, waving hello
 
 const mascots = new Set();
 const byEl = new WeakMap(); // mascot element -> its state, for setMascotStatus()
@@ -58,90 +29,19 @@ function stepSpring(s, dt) {
 }
 const settled = (s) => Math.abs(s.v) < 0.004 && Math.abs(s.t - s.x) < 0.004;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
-const pct = (n, of) => `${((n / of) * 100).toFixed(3)}%`;
-
-// ---- Pose measuring (once, shared by every mascot) ----
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const im = new Image();
-    im.onload = () => resolve(im);
-    im.onerror = () => reject(new Error(`could not load ${src}`));
-    im.src = src;
-  });
-}
-
-// Bounding box of the bird's opaque pixels, plus a cheap content signature so
-// two files holding the same picture count as one pose (a click then always
-// shows a visibly different pose). If pixels can't be read, the whole image is
-// treated as the bird -- still drawn, just without the padding correction.
-function measure(im, src) {
-  const w = im.naturalWidth;
-  const h = im.naturalHeight;
-  try {
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    g.drawImage(im, 0, 0);
-    const d = g.getImageData(0, 0, w, h).data;
-    let x0 = w, y0 = h, x1 = -1, y1 = -1, sig = 0;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const a = d[(y * w + x) * 4 + 3];
-        if (a <= 24) continue;
-        if (x < x0) x0 = x; if (x > x1) x1 = x;
-        if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-    }
-    if (x1 < 0) throw new Error('empty image');
-    for (let i = 0; i < d.length; i += 4 * 97) sig = (sig * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7 + d[i + 3]) >>> 0;
-    return { src, w, h, bx: x0, by: y0, bw: x1 - x0 + 1, bh: y1 - y0 + 1, sig: `${w}x${h}:${sig}` };
-  } catch {
-    return { src, w, h, bx: 0, by: 0, bw: w, bh: h, sig: src };
-  }
-}
-
-// Resolves to { stageW, stageH, poses: [{ src, img: {left, top, width}, eyes, sig }] }
-// with every position already expressed as a percentage of the shared stage.
-const posesReady = Promise.all(POSE_URLS.map((src) => loadImage(src).then((im) => measure(im, src))))
-  .then((list) => {
-    // Sized from the front pose, then grown only if some pose wouldn't fit.
-    const refH = list[DEFAULT_POSE].bh / DEFAULT_BIRD_HEIGHT_SHARE;
-    const stageH = Math.max(refH, Math.max(...list.map((p) => p.bh)) + STAGE_PAD * 2);
-    const stageW = Math.max(refH * STAGE_ASPECT, Math.max(...list.map((p) => p.bw)) + STAGE_PAD * 2);
-    const poses = list.map((p, i) => {
-      const birdLeft = (stageW - p.bw) / 2; // centered
-      const birdTop = stageH - STAGE_PAD - p.bh; // feet on the shared baseline
-      return {
-        src: p.src,
-        sig: p.sig,
-        img: { left: pct(birdLeft - p.bx, stageW), top: pct(birdTop - p.by, stageH), width: pct(p.w, stageW) },
-        lid: EYES[i]?.lid,
-        eyes: (EYES[i]?.eyes || []).map(([x0, y0, x1, y1]) => ({
-          left: pct(birdLeft + x0 - LID_PAD, stageW),
-          top: pct(birdTop + y0 - LID_PAD, stageH),
-          width: pct(x1 - x0 + LID_PAD * 2, stageW),
-          height: pct(y1 - y0 + LID_PAD * 2, stageH),
-        })),
-      };
-    });
-    return { stageW, stageH, poses };
-  });
 
 // placement: 'welcome' (centered above the welcome heading) or 'corner' (the
 // small companion docked at the chat input's bottom-right once a conversation
-// starts). Only the owl itself takes clicks; its box never blocks the UI.
-// tips: optional speech-bubble lines; each click on the owl moves to the next.
+// starts). Only the dragon itself takes clicks; its box never blocks the UI.
+// tips: optional speech-bubble lines; each click on the dragon moves to the next.
 // setMascotStatus() can temporarily replace the tip with a live status line.
 export function createMascot({ placement = 'corner', tips = [] } = {}) {
   const el = document.createElement('div');
-  el.className = `mascot mascot--${placement}`;
+  el.className = `mascot mascot--${placement} is-ready`;
   el.innerHTML = `
     <div class="mascot-float"><div class="mascot-lean">
-      <button type="button" class="mascot-hit" aria-label="Vi, the Ask Vi Games owl. Click to change pose.">
-        <span class="mascot-art">
-          <img class="mascot-img" alt="" draggable="false">
-          <span class="mascot-lids" aria-hidden="true"></span>
-        </span>
+      <button type="button" class="mascot-hit" aria-label="The K Games dragon. Click to change pose.">
+        <span class="mascot-art"></span>
       </button>
     </div></div>
     <div class="mascot-shadow" aria-hidden="true"></div>`;
@@ -154,13 +54,18 @@ export function createMascot({ placement = 'corner', tips = [] } = {}) {
     el,
     lean: el.querySelector('.mascot-lean'),
     art: el.querySelector('.mascot-art'),
-    img: el.querySelector('.mascot-img'),
-    lids: el.querySelector('.mascot-lids'),
+    id: newDragonId(), // keeps this dragon's gradient ids unique on the page
     pose: DEFAULT_POSE,
-    layout: null, // filled in once the pose images are measured
     swapping: false,
     body: spring(70, 9), // deg -- underdamped, so it eases in and overshoots a touch
     hop: spring(220, 11), // px
+    // Where the dragon looks (-1..1 each way): drives the 3D head turn, via
+    // --lx / --ly and the .d-* layer shifts in main.css.
+    lookX: spring(90, 13),
+    lookY: spring(90, 13),
+    // Where the pupils point (-1..1): quicker than the head, so the eyes lead.
+    eyeX: spring(260, 24),
+    eyeY: spring(260, 24),
     engaged: false,
     bubble: el.querySelector('.mascot-bubble'),
     tips,
@@ -169,35 +74,16 @@ export function createMascot({ placement = 'corner', tips = [] } = {}) {
   };
   byEl.set(el, m);
   el.querySelector('.mascot-hit').addEventListener('click', () => changePose(m));
-  // The stage keeps a sensible shape while the poses are being measured, then
-  // takes the measured one; the bird fades in once it can be placed properly.
-  posesReady.then((layout) => {
-    m.layout = layout;
-    m.art.style.aspectRatio = `${layout.stageW} / ${layout.stageH}`;
-    showPose(m, m.pose);
-    el.classList.add('is-ready');
-  });
+  showPose(m, m.pose);
   mascots.add(m);
   scheduleBlink(m);
   kick();
   return el;
 }
 
-// Puts pose i on the stage: the image positioned so its bird lands centered
-// on the shared baseline, and eyelids over that pose's eyes.
 function showPose(m, i) {
-  const p = m.layout.poses[i];
   m.pose = i;
-  m.img.src = p.src;
-  Object.assign(m.img.style, p.img);
-  m.lids.innerHTML = '';
-  for (const e of p.eyes) {
-    const l = document.createElement('span');
-    l.className = 'mascot-lid';
-    Object.assign(l.style, e);
-    l.style.setProperty('--lid', p.lid);
-    m.lids.appendChild(l);
-  }
+  m.art.innerHTML = dragonSvg(i, { className: 'mascot-svg', id: m.id });
 }
 
 // Every 2.6-6.4s, sometimes a quick double blink. Skipped mid pose-swap.
@@ -211,7 +97,7 @@ function scheduleBlink(m) {
 }
 
 function blink(m) {
-  if (m.swapping || !m.layout?.poses[m.pose].eyes.length) return;
+  if (m.swapping || !POSES[m.pose].blinks) return;
   m.el.classList.add('is-blinking');
   setTimeout(() => m.el.classList.remove('is-blinking'), 140);
 }
@@ -223,16 +109,11 @@ function blink(m) {
 // on timers rather than the animation's promise, so a throttled or cancelled
 // animation can never leave the mascot stuck mid-swap.
 const SWAP_MS = 300;
-const SWAP_AT = 0.36; // the bottom of the dip, where the image changes
+const SWAP_AT = 0.36; // the bottom of the dip, where the pose changes
 
 function changePose(m) {
-  if (m.swapping || !m.layout) return;
-  // Any pose that looks different from the current one (files holding the
-  // same picture share a signature, so they never count as a change).
-  const { poses } = m.layout;
-  const current = poses[m.pose].sig;
-  const options = poses.map((p, i) => i).filter((i) => poses[i].sig !== current);
-  if (!options.length) return;
+  if (m.swapping) return;
+  const options = POSES.map((p, i) => i).filter((i) => i !== m.pose);
   const next = options[Math.floor(Math.random() * options.length)];
   m.swapping = true;
   m.el.classList.remove('is-blinking');
@@ -280,12 +161,29 @@ export function setMascotStatus(el, text) {
 
 function updateTargets(m, now) {
   const r = m.el.getBoundingClientRect();
+  // Eyes: look at the cursor whenever it's in the window (not just while it
+  // moves). Measured from the eyes (a third of the way down the art); the
+  // direction is near-unit far away and shrinks as the cursor nears the face.
+  const art = m.art.getBoundingClientRect();
+  if (pointer && art.width > 0 && !reduceMotion.matches) {
+    const ex = pointer.x - (art.left + art.width / 2);
+    const ey = pointer.y - (art.top + art.height * 0.33);
+    const d = Math.hypot(ex, ey) + 50;
+    m.eyeX.t = ex / d;
+    m.eyeY.t = ey / d;
+  } else {
+    m.eyeX.t = 0;
+    m.eyeY.t = 0;
+  }
   const active = pointer && now - pointer.at < IDLE_MS && r.width > 0;
   if (m.engaged && !active && !reduceMotion.matches) m.hop.v -= 70; // pop up a little as it lets go
   m.engaged = !!active;
-  if (!active || reduceMotion.matches) { m.body.t = 0; return; }
+  if (!active || reduceMotion.matches) { m.body.t = 0; m.lookX.t = 0; m.lookY.t = 0; return; }
   const dx = pointer.x - (r.left + r.width / 2);
+  const dy = pointer.y - (r.top + r.height * 0.4); // roughly eye level
   m.body.t = clamp(dx / 380, -1, 1) * 11;
+  m.lookX.t = clamp(dx / 320, -1, 1);
+  m.lookY.t = clamp(dy / 320, -1, 1);
 }
 
 function frame(now) {
@@ -295,12 +193,16 @@ function frame(now) {
   for (const m of mascots) {
     if (!m.el.isConnected) { mascots.delete(m); continue; }
     updateTargets(m, now);
-    for (const s of [m.body, m.hop]) {
+    for (const s of [m.body, m.hop, m.lookX, m.lookY, m.eyeX, m.eyeY]) {
       stepSpring(s, dt / 2); stepSpring(s, dt / 2); // two substeps keep the stiff springs stable
       if (!settled(s)) moving = true;
     }
     if (m.engaged) moving = true; // keep watching until the cursor goes idle
     m.lean.style.transform = `translateY(${m.hop.x.toFixed(2)}px) rotate(${m.body.x.toFixed(2)}deg)`;
+    m.el.style.setProperty('--lx', m.lookX.x.toFixed(3));
+    m.el.style.setProperty('--ly', m.lookY.x.toFixed(3));
+    m.el.style.setProperty('--ex', m.eyeX.x.toFixed(3));
+    m.el.style.setProperty('--ey', m.eyeY.x.toFixed(3));
   }
   rafId = moving ? requestAnimationFrame(frame) : 0;
 }
