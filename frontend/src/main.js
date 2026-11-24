@@ -1,5 +1,5 @@
 'use strict';
-import { initSidebar } from './chats.js';
+import { initSidebar, genreOf, genreLabelOf, cleanPromptTitle } from './chats.js';
 import { createMascot, setMascotStatus } from './mascot.js';
 
 const AGENTS = {
@@ -98,10 +98,11 @@ function applyTheme(theme) {
   if (theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
   if (els.themeToggle) {
-    els.themeToggle.textContent = theme === 'light' ? '☀️' : '🌙';
+    // The day/night switch draws itself from data-theme (see .theme-switch in main.css).
     els.themeToggle.setAttribute('aria-label', theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+    els.themeToggle.title = theme === 'light' ? 'Switch to night mode' : 'Switch to day mode';
   }
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f4f5f8' : '#0c0e13');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f5f8f8' : '#0b0f12');
 }
 
 function toggleTheme() {
@@ -283,7 +284,7 @@ function showWelcome() {
   els.messages.innerHTML = '';
   const box = document.createElement('div');
   box.className = 'welcome';
-  box.innerHTML = '<div class="welcome-hero"><div class="welcome-bubble">Hi! Tell me a game idea and I\'ll help you design and build it.</div></div><h2>Where should we <span class="accent-word">start?</span></h2><p>Chat about anything, or describe a game and I will design and build it with you, step by step.</p>';
+  box.innerHTML = '<div class="welcome-hero"><div class="welcome-bubble">Rawr! Tell me a game idea and I\'ll breathe life into it.</div></div><h2>What game are we <span class="accent-word">building?</span></h2><p>Chat about anything, or describe a game and I will design and build it with you, step by step.</p>';
   box.querySelector('.welcome-hero').prepend(createMascot({ placement: 'welcome' }));
   const chips = document.createElement('div');
   chips.className = 'chips';
@@ -309,7 +310,7 @@ function setStatus(text) {
 }
 
 // The composer reflects only the chat on screen: busy (Stop shown, input
-// locked, its status in Vi's bubble) while that chat has a reply generating;
+// locked, its status in the dragon's bubble) while that chat has a reply generating;
 // other chats stay free to use.
 function refreshComposer() {
   const turn = currentTurn();
@@ -508,12 +509,12 @@ function notifyDone(turn) {
   if (!document.hidden) return;
   const message = turn.builtGameUrl ? 'Your game is ready'
     : /\/export\/(apk|exe|msi|setup|ios|mac)\?v=/.test(turn.raw) ? 'Your app is ready to download'
-      : 'Vi has replied';
+      : 'K Games has replied';
   chime();
   document.title = `● ${message}`;
   try {
     if ('Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification(message, { body: turn.newTitle || 'Open Ask Vi Games to see it.', tag: `askvi-${turn.session}` });
+      const n = new Notification(message, { body: turn.newTitle || 'Open K Games to see it.', tag: `kgames-${turn.session}` });
       n.onclick = () => { window.focus(); n.close(); };
     }
   } catch { /* notifications are optional */ }
@@ -790,7 +791,7 @@ async function send(text, opts = {}) {
     if (err.name === 'AbortError' && shown()) planStop(turn.plan);
     if (shown()) {
       if (err.name === 'AbortError') addMessage('error', 'Stopped. Your message is kept in this chat — send it again whenever you like.');
-      else if (lostConnection) addMessage('error', 'The connection to the server dropped, but Vi is still working on this in the background. This chat will update by itself when it’s done.');
+      else if (lostConnection) addMessage('error', 'The connection to the server dropped, but K Games is still working on this in the background. This chat will update by itself when it’s done.');
       else addMessage('error', err.message || 'Could not reach the server.');
     }
   } finally {
@@ -992,18 +993,22 @@ function renderWelcomeSavedPrompts() {
     top.className = 'welcome-saved-top';
     const title = document.createElement('span');
     title.className = 'welcome-saved-title';
-    title.textContent = p.title;
-    top.appendChild(title);
-    if (p.type && p.type !== 'any') {
-      const tag = document.createElement('span');
-      tag.className = 'welcome-saved-tag';
-      tag.textContent = p.type;
-      top.appendChild(tag);
-    }
+    title.textContent = cleanPromptTitle(p.title);
+    // Every card gets its genre, the same one the Saved prompts tab groups it under.
+    const tag = document.createElement('span');
+    tag.className = 'welcome-saved-tag';
+    tag.textContent = genreLabelOf(genreOf(p), true);
+    top.append(title, tag);
     const body = document.createElement('span');
     body.className = 'welcome-saved-body';
-    // Drop the "Title: X" line the card already shows as its heading.
-    body.textContent = p.spec.replace(/[*_#]/g, '').replace(/^[ \t]*Title:[^\n]*\n?/im, '').replace(/\s+/g, ' ').trim();
+    // Drop the "Title:" and "Genre:" lines (the heading and tag already show
+    // them) and an empty "Story: None —", so the preview starts with the game.
+    const preview = p.spec.replace(/[*_#]/g, '')
+      .replace(/^[ \t]*(?:Title|Genre)\s*[:—-][^\n]*\n?/gim, '')
+      .replace(/Story\s*:\s*None\s*[—–-]*\s*/i, '')
+      .replace(/^\s*Story\s*:\s*/i, '')
+      .replace(/\s+/g, ' ').trim();
+    body.textContent = preview.charAt(0).toUpperCase() + preview.slice(1);
     const meta = document.createElement('span');
     // Already built (see store.listSavedPrompts): Send loads that game instead of rebuilding it.
     meta.className = p.gameSession ? 'welcome-saved-meta is-ready' : 'welcome-saved-meta';
@@ -1052,11 +1057,11 @@ async function waitForTurn(turn) {
   }
 }
 els.themeToggle?.addEventListener('click', toggleTheme);
-// Vi's small corner companion, docked to the chat input; CSS keeps it hidden until the first message replaces the welcome screen.
+// The dragon's small corner companion, docked to the chat input; CSS keeps it hidden until the first message replaces the welcome screen.
 const cornerMascot = createMascot({
   placement: 'corner',
   tips: [
-    'Hoot hoot! Click a saved prompt in the sidebar to reuse it in one go.',
+    'Rawr! Click a saved prompt in the sidebar to reuse it in one go.',
     'Describe the goal, controls and vibe of your game — I\'ll handle the rest.',
     'Want changes? Tell me what to tweak and I\'ll rebuild the game.',
     'Every game you finish is saved under Saved prompts — click it to rebuild instantly.',

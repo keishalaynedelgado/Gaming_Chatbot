@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#0c0e13">
-  <title>Ask Vi Games</title>
-  <link rel="icon" type="image/png" href="./src/assets/vi/pose-1.png">
+  <meta name="theme-color" content="#0b0f12">
+  <title>K Games</title>
+  <link rel="icon" type="image/svg+xml" href="./src/assets/dragon/dragon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./src/styles/main.css">
   <script>
     // Applied synchronously, before first paint, so a saved light-theme choice
@@ -24,8 +24,11 @@
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
     <nav class="sidebar" id="sidebar" aria-label="Chat history">
       <div class="sidebar-brand">
-        <h1>Ask Vi Games</h1>
-        <span class="sidebar-brand-sub">a the primary provider product</span>
+        <img class="sidebar-brand-logo" src="./src/assets/dragon/dragon.svg" alt="" aria-hidden="true">
+        <div class="sidebar-brand-text">
+          <h1><span class="brand-k">K</span> Games</h1>
+          <span class="sidebar-brand-sub">a chatbot that can generate games</span>
+        </div>
       </div>
       <div class="sidebar-head">
         <button class="sidebar-new" id="newChat" type="button">
@@ -50,10 +53,14 @@
     <section class="chat" aria-label="Chat">
       <header class="chat-head">
         <div class="chat-head-left">
-          <button class="ghost icon-btn" id="sidebarToggle" type="button" aria-label="Toggle chat history" aria-expanded="true">☰</button>
+          <button class="ghost icon-btn" id="sidebarToggle" type="button" aria-label="Toggle chat history" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 4v16"/></svg></button>
         </div>
         <div class="head-actions">
-          <button class="ghost icon-btn theme-toggle" id="themeToggle" type="button" aria-label="Switch to light theme">🌙</button>
+          <button class="theme-switch" id="themeToggle" type="button" aria-label="Switch to light theme">
+            <span class="ts-stars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="ts-cloud" aria-hidden="true"></span>
+            <span class="ts-knob" aria-hidden="true"><i></i><i></i><i></i></span>
+          </button>
         </div>
       </header>
 
@@ -85,7 +92,7 @@
   <dialog class="prompt-modal" id="savePromptModal" aria-labelledby="savePromptHeading">
     <form class="prompt-modal-form" id="savePromptForm" method="dialog" novalidate>
       <div class="prompt-modal-head">
-        <img class="prompt-modal-vi" src="./src/assets/vi/pose-1.png" alt="" aria-hidden="true">
+        <img class="prompt-modal-icon" src="./src/assets/dragon/dragon.svg" alt="" aria-hidden="true">
         <div>
           <h2 id="savePromptHeading">Save Prompt</h2>
           <p>Saved prompts are build-ready: using one starts building the game right away — no questions.</p>

@@ -333,7 +333,7 @@ async function signingKey(t, signal) {
   if (!fs.existsSync(ks)) {
     await fsp.mkdir(path.dirname(ks), { recursive: true });
     await run(t.keytool, ['-genkeypair', '-noprompt', '-keystore', ks, '-storepass', 'askviexport', '-keypass', 'askviexport', '-alias', 'askvi',
-      '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Ask Vi Games, O=the primary provider'], { signal, env: javaEnv(t) });
+      '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=K Games, O=K Games'], { signal, env: javaEnv(t) });
   }
   return { ks, pass: 'askviexport', alias: 'askvi' };
 }
@@ -632,7 +632,7 @@ ${icon}      </data>
   <key>PayloadUUID</key>${s(stableGuid(`${id}:profile`))}
   <key>PayloadDisplayName</key>${s(title)}
   <key>PayloadDescription</key>${s(`Adds ${title} to the Home Screen.`)}
-  <key>PayloadOrganization</key>${s('Ask Vi Games')}
+  <key>PayloadOrganization</key>${s('K Games')}
   <key>PayloadRemovalDisallowed</key><false/>
 </dict>
 </plist>

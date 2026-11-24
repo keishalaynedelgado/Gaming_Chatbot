@@ -11,7 +11,7 @@
   IconPath, and Guid1..Guid3 for the components.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="$(var.Title)" Language="1033" Version="$(var.Version)" Manufacturer="Ask Vi Games" UpgradeCode="$(var.UpgradeCode)">
+  <Product Id="*" Name="$(var.Title)" Language="1033" Version="$(var.Version)" Manufacturer="K Games" UpgradeCode="$(var.UpgradeCode)">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" InstallPrivileges="limited" Description="$(var.Title)" />
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />

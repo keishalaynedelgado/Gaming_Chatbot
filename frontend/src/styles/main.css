@@ -1,56 +1,53 @@
 /* ==========================================================================
-   Design tokens
-   Layered dark-charcoal surfaces (never pure black), one consistent accent.
-   Dark is the default; light is available via an explicit in-app toggle
-   (data-theme="light" on <html>), never silently from OS/browser preference
-   -- that's what made the redesign invisible to a user whose OS was in light
-   mode the first time around.
+   Design tokens -- K Games
+   A gender-neutral palette: cool slate surfaces, a teal accent and golden
+   yellow as the second color (the dragon's own colors). Dark is the
+   default; light is available via the in-app toggle (data-theme="light" on
+   <html>), never silently from OS/browser preference.
    ========================================================================== */
 :root {
-  --bg: #0b0c14;
-  --surface-1: #12131d;
-  --surface-2: #1a1c2a;
-  --surface-3: #242637;
-  --border: #262a3d;
-  --border-strong: #363a52;
+  --bg: #0b0f12;
+  --surface-1: #10151a;
+  --surface-2: #161d23;
+  --surface-3: #1f2830;
+  --border: #243039;
+  --border-strong: #33434f;
 
-  --text: #e9eaf0;
-  --text-secondary: #a4aabb;
-  --text-tertiary: #6d7288;
+  --text: #edf3f5;
+  --text-secondary: #a1b0b8;
+  --text-tertiary: #6b7c86;
 
-  --accent: #6d7bff;
-  --accent-hover: #818dff;
-  --accent-active: #5c6ae8;
-  --accent-text: #ffffff;
-  --accent-soft: rgba(109, 123, 255, 0.14);
-  --accent-soft-strong: rgba(109, 123, 255, 0.24);
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-active: #14b8a6;
+  --accent-text: #052421;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --accent-soft-strong: rgba(45, 212, 191, 0.26);
+  --accent-glow: rgba(45, 212, 191, 0.28);
+  --accent-2: #fbbf24;
+  --accent-gradient: linear-gradient(135deg, #5eead4 0%, #2dd4bf 50%, #14b8a6 100%);
+  --highlight-gradient: linear-gradient(90deg, #2dd4bf 0%, #fbbf24 100%);
 
-  --user-bubble: #2a2f57;
-  --danger: #f16d84;
-  --danger-soft: rgba(241, 109, 132, 0.1);
-  --success: #3ecf8e;
-  --gold: #d9a21f;
+  --user-bubble: #15343a;
+  --danger: #ff6b7d;
+  --danger-soft: rgba(255, 107, 125, 0.1);
+  --success: #4ade80;
+  --gold: #fbbf24;
 
-  /* The sidebar is its own fixed dark chrome, identical in both of the app's
-     light/dark themes (matching the reference design, which never lightens
-     its sidebar) -- declared once here, not overridden per theme. Exact
-     values lifted from the reference app's own computed styles
-     (--side/--side-ink/--side-muted), with hover/active as translucent
-     white overlays (rather than a solid block) to match its soft hover
-     highlight. */
-  --sidebar-bg: #101828;
-  --sidebar-text: #e6e8f2;
-  --sidebar-text-secondary: #8d94ad;
-  --sidebar-text-tertiary: #6c7288;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-hover: rgba(255, 255, 255, 0.06);
-  --sidebar-active: rgba(255, 255, 255, 0.1);
-  --sidebar-chip-bg: rgba(90, 82, 200, 0.32);
-  --sidebar-input-bg: rgba(255, 255, 255, 0.045);
+  /* The sidebar is its own fixed dark chrome, the same in both themes. */
+  --sidebar-bg: #080b0e;
+  --sidebar-text: #edf3f5;
+  --sidebar-text-secondary: #98a7af;
+  --sidebar-text-tertiary: #64747e;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-hover: rgba(255, 255, 255, 0.05);
+  --sidebar-active: rgba(45, 212, 191, 0.11);
+  --sidebar-chip-bg: rgba(45, 212, 191, 0.2);
+  --sidebar-input-bg: rgba(255, 255, 255, 0.04);
   --sidebar-input-hover-bg: rgba(255, 255, 255, 0.07);
-  --sidebar-btn-bg: #19233c;
-  --sidebar-btn-hover-bg: #212c48;
-  --sidebar-btn-text: #ffffff;
+  --sidebar-btn-bg: var(--accent-gradient);
+  --sidebar-btn-hover-bg: var(--accent-gradient);
+  --sidebar-btn-text: var(--accent-text);
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -70,31 +67,35 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #f6f6fb;
-  --surface-1: #f6f6fb;
+  --bg: #f5f8f8;
+  --surface-1: #f5f8f8;
   --surface-2: #ffffff;
-  --surface-3: #f0f0f8;
-  --border: #e3e4ef;
-  --border-strong: #cfd1e3;
+  --surface-3: #ecf2f2;
+  --border: #dde6e7;
+  --border-strong: #c7d3d5;
 
-  --text: #1b1e33;
-  --text-secondary: #62667f;
-  --text-tertiary: #888ea1;
+  --text: #17221f;
+  --text-secondary: #56666a;
+  --text-tertiary: #859498;
 
-  --accent: #5a52c8;
-  --accent-hover: #4a42b5;
-  --accent-active: #3d3696;
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --accent-active: #134e4a;
   --accent-text: #ffffff;
-  --accent-soft: #ecebfb;
-  --accent-soft-strong: rgba(90, 82, 200, 0.22);
+  --accent-soft: #dff4f1;
+  --accent-soft-strong: rgba(15, 118, 110, 0.22);
+  --accent-glow: rgba(15, 118, 110, 0.18);
+  --accent-2: #d97706;
+  --accent-gradient: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
+  --highlight-gradient: linear-gradient(90deg, #0f766e 0%, #d97706 100%);
 
-  --user-bubble: #ecebfb;
+  --user-bubble: #dff4f1;
   --danger: #c2413b;
   --danger-soft: rgba(194, 65, 59, 0.08);
-  --success: #1f8a5b;
+  --success: #15803d;
 
-  --shadow-sm: 0 1px 2px rgba(27, 30, 51, 0.05);
-  --shadow-md: 0 1px 2px rgba(27, 30, 51, 0.05), 0 10px 30px rgba(27, 30, 51, 0.08);
+  --shadow-sm: 0 1px 2px rgba(23, 34, 31, 0.05);
+  --shadow-md: 0 1px 2px rgba(23, 34, 31, 0.05), 0 10px 30px rgba(23, 34, 31, 0.08);
 
   color-scheme: light;
 }
@@ -108,7 +109,7 @@ html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 "Lato", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 15px/1.55 "Outfit", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -159,15 +160,21 @@ body {
   border-radius: var(--radius-pill);
 }
 
-/* Sidebar brand -- top of the sidebar, always paired with the chat list it owns. */
-/* Wordmark: the product name, bold and tight,
-   with "a the primary provider product" small underneath. */
-.sidebar-brand { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 18px 20px 6px; flex: none; }
+/* Sidebar brand: the dragon logo beside the K Games wordmark and tagline. */
+.sidebar-brand {
+  display: flex; align-items: center; gap: 10px; min-width: var(--sidebar-w);
+  padding: 16px 20px 8px; flex: none;
+}
+.sidebar-brand-logo { width: 42px; height: 42px; flex: none; }
+.sidebar-brand-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .sidebar-brand h1 {
-  font-size: 24px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.05; margin: 0; color: var(--sidebar-text);
+  font-size: 23px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.05; margin: 0; color: var(--sidebar-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.sidebar-brand-sub { font-size: 11.5px; font-weight: 600; color: var(--sidebar-text-secondary); letter-spacing: 0.01em; }
+.sidebar-brand-sub {
+  font-size: 11.5px; font-weight: 500; color: var(--sidebar-text-secondary); letter-spacing: 0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ==========================================================================
    Sidebar
@@ -194,24 +201,21 @@ body {
   padding: 12px 14px; font-weight: 700; border-radius: 12px;
   transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
 }
-.sidebar-new:hover { background: var(--sidebar-btn-hover-bg); border-color: rgba(255, 255, 255, 0.16); box-shadow: var(--shadow-sm); }
+.sidebar-new:hover { background: var(--sidebar-btn-hover-bg); border-color: transparent; box-shadow: 0 8px 22px var(--accent-glow); filter: brightness(1.06); }
+.sidebar-new:active { filter: brightness(0.95); }
 .sidebar-new-main { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .sidebar-new-icon {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 18px; height: 18px; border: 1.5px solid currentColor; border-radius: 5px;
   font-size: 12px; line-height: 1; opacity: 0.85;
 }
-.sidebar-new-shortcut { font-size: 11px; font-weight: 600; color: var(--sidebar-text-tertiary); letter-spacing: 0.02em; }
+.sidebar-new-shortcut { font-size: 11px; font-weight: 600; color: currentColor; opacity: 0.6; letter-spacing: 0.02em; }
 
 .sidebar-search { padding: 0 16px 10px; flex: none; position: relative; }
-.sidebar-search::before {
-  content: "🔍"; position: absolute; left: 28px; top: 50%; transform: translateY(-50%);
-  font-size: 12px; opacity: 0.55; pointer-events: none;
-}
 .sidebar-search input {
   width: 100%; font: inherit; font-size: 13px; color: var(--sidebar-text);
   background: var(--sidebar-input-bg); border: 1px solid var(--sidebar-border); border-radius: 12px;
-  padding: 12px 11px 12px 34px;
+  padding: 12px 14px;
   transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
 }
 .sidebar-search input::placeholder { color: var(--sidebar-text-tertiary); }
@@ -220,12 +224,12 @@ body {
   outline: none; background: var(--sidebar-input-hover-bg); border-color: var(--accent); box-shadow: var(--shadow-focus);
 }
 
-/* Chats / Saved prompts segmented control: one dark navy track holding two
-   equal tabs; the active one lifts onto a slightly lighter navy pill. */
+/* Chats / Saved prompts segmented control: one dark track holding two equal
+   tabs; the active one lifts onto a lighter pill. */
 .sidebar-tabs {
   display: grid; grid-template-columns: 1fr 1fr; gap: 4px; flex: none;
   margin: 0 16px 8px; padding: 4px; min-width: calc(var(--sidebar-w) - 32px);
-  background: #0b1220; border: 1px solid var(--sidebar-border); border-radius: 12px;
+  background: #05080a; border: 1px solid var(--sidebar-border); border-radius: 12px;
 }
 .sidebar-tab {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -238,7 +242,7 @@ body {
 .sidebar-tab:hover { background: rgba(255, 255, 255, 0.04); color: var(--sidebar-text); }
 .sidebar-tab:active { background: rgba(255, 255, 255, 0.06); transform: none; }
 .sidebar-tab[aria-selected="true"], .sidebar-tab[aria-selected="true"]:hover {
-  background: #1d2947; color: #ffffff; font-weight: 700;
+  background: #1a242b; color: #ffffff; font-weight: 700;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 .sidebar-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 9px; }
@@ -511,7 +515,7 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
    positioned off its right shoulder so it never pushes the mascot sideways. */
 .welcome-hero { position: relative; display: flex; justify-content: center; margin: 0 auto 6px; }
 .welcome-bubble {
-  position: absolute; left: calc(50% + 70px); top: 40px; width: max-content; max-width: 230px; padding: 12px 15px;
+  position: absolute; left: calc(50% + 86px); top: 40px; width: max-content; max-width: 230px; padding: 12px 15px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 16px 16px 16px 5px;
   box-shadow: var(--shadow-md); color: var(--text); font-size: 14px; line-height: 1.5; text-align: left;
 }
@@ -656,10 +660,10 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
    breathing use the independent `translate` / `rotate` / `scale` properties,
    so none of the layers ever overwrite each other.
    ========================================================================== */
-/* --mascot-size is the bird's own box. The padding around it is headroom for
-   everything that moves it (bob, hop, lean, and the 1.1x pose bounce), so the
-   full bird -- antler-brows, spread wings, tail, feet -- always stays inside
-   the mascot's own layout box and is never clipped by a scrolling parent. */
+/* --mascot-size is the dragon's own box. The padding around it is headroom
+   for everything that moves it (bob, hop, lean, and the 1.1x pose bounce), so
+   the full dragon -- horns, wings, tail, feet -- always stays inside the
+   mascot's own layout box and is never clipped by a scrolling parent. */
 .mascot {
   --mascot-size: 120px;
   --mascot-pad-x: calc(var(--mascot-size) * 0.12);
@@ -671,40 +675,32 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
 .mascot-float, .mascot-lean { overflow: visible; }
 .mascot-float { will-change: translate, rotate; }
 .mascot-lean { transform-origin: 50% 94%; will-change: transform; }
-/* Only the owl itself is clickable, so its box never blocks the UI around it. */
+/* Only the dragon itself is clickable, so its box never blocks the UI around it. */
 /* Scoped under .mascot so it outranks `.composer button`, which would otherwise
-   pad the corner mascot (it lives inside the composer) and shrink the bird. */
+   pad the corner mascot (it lives inside the composer) and shrink the dragon. */
 .mascot .mascot-hit {
   display: block; width: 100%; padding: 0; margin: 0; border: 0; border-radius: 40%; overflow: visible;
   background: none; cursor: pointer; pointer-events: auto; -webkit-tap-highlight-color: transparent;
 }
 .mascot .mascot-hit:hover, .mascot .mascot-hit:active { background: none; transform: none; }
 .mascot .mascot-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -6px; }
-/* The stage: one shared box every pose is drawn into (mascot.js sets its exact
-   aspect ratio and each image's position once the poses are measured). It
-   stays empty rather than showing a mis-sized bird until then. */
-.mascot-art {
-  position: relative; display: block; aspect-ratio: 420 / 412; transform-origin: 50% 96%;
-  opacity: 0; transition: opacity 0.25s var(--ease);
+/* The stage: one shared square every pose is drawn into (dragon.js). */
+.mascot-art { position: relative; display: block; aspect-ratio: 1 / 1; transform-origin: 50% 96%; }
+.mascot-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.3));
 }
-.mascot.is-ready .mascot-art { opacity: 1; }
-.mascot-img {
-  position: absolute; display: block; max-width: none; height: auto; -webkit-user-drag: none;
-  filter: drop-shadow(0 10px 14px rgba(40, 30, 120, 0.25));
+/* Eyelids (dragon.js eyeOpen): body-colored, closed only while blinking. */
+.dragon-lid {
+  transform-box: fill-box; transform-origin: 50% 0; transform: scaleY(0);
+  transition: transform 70ms ease-in;
 }
-.mascot-lids { position: absolute; inset: 0; pointer-events: none; }
-.mascot-lid {
-  position: absolute; border-radius: 50%;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--lid) 82%, #3b3f8f), var(--lid));
-  box-shadow: inset 0 -1.5px 0 rgba(30, 32, 90, 0.55);
-  transform: scaleY(0); transform-origin: 50% 0; transition: transform 70ms ease-in;
-}
-.mascot.is-blinking .mascot-lid { transform: scaleY(1); }
+.mascot.is-blinking .dragon-lid { transform: scaleY(1); }
 .mascot-shadow {
   width: 44%; height: calc(var(--mascot-size) * 0.06); margin: -2px auto 0; border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(20, 16, 60, 0.34), transparent);
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.4), transparent);
 }
-:root[data-theme="light"] .mascot-shadow { background: radial-gradient(closest-side, rgba(60, 50, 140, 0.24), transparent); }
+:root[data-theme="light"] .mascot-shadow { background: radial-gradient(closest-side, rgba(15, 60, 60, 0.2), transparent); }
 
 @media (prefers-reduced-motion: no-preference) {
   .mascot-float { animation: mascot-bob 3.6s ease-in-out infinite, mascot-sway 7.2s ease-in-out infinite; }
@@ -717,13 +713,13 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
 @keyframes mascot-breathe { 0%, 100% { scale: 1 1; } 50% { scale: 1.012 1.024; } }
 
 /* Placements */
-.mascot--welcome { --mascot-size: 154px; } /* bird ~139px tall */
+.mascot--welcome { --mascot-size: 160px; }
 
 /* The corner companion lives inside the composer, so it always tracks the
    input's position and height. With room to spare it floats just off the
    input's top-right corner, outside the message column, with its speech
    bubble in the empty gutter (to its right, or above it when the gutter is
-   narrower), so it never covers the conversation. Without that room the owl
+   narrower), so it never covers the conversation. Without that room the dragon
    tucks in above the input's right end with the bubble to its left, inside the
    bottom space the message list reserves for them.
    Hidden until the first message replaces the welcome screen. */
@@ -743,7 +739,7 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
   font-size: 13.5px; line-height: 1.45; text-align: left; pointer-events: none;
 }
 .mascot-bubble:empty { display: none; }
-/* While Vi is working, the bubble shows the live status with a pulsing dot. */
+/* While the dragon is working, the bubble shows the live status with a pulsing dot. */
 .mascot-bubble.is-busy { color: var(--text-secondary); }
 .mascot-bubble.is-busy::before {
   content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; vertical-align: 1px;
@@ -752,15 +748,15 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
 @media (prefers-reduced-motion: reduce) { .mascot-bubble.is-busy::before { animation: none; } }
 @container chat (min-width: 1200px) {
   /* Beside the input, outside the message column -- nothing to keep clear. */
-  .mascot--corner { --mascot-size: 84px; right: auto; left: calc(100% + 16px); bottom: calc(100% + 8px); } /* bird ~76px tall, as in the reference */
+  .mascot--corner { --mascot-size: 88px; right: auto; left: calc(100% + 16px); bottom: calc(100% + 8px); }
   .mascot--corner .mascot-shadow { display: block; }
   .chat:not(:has(.welcome)) .messages { padding-bottom: 24px; }
-  /* Above the owl, starting at its left edge and never wider than the gutter. */
+  /* Above the dragon, starting at its left edge and never wider than the gutter. */
   .mascot-bubble { right: auto; left: 0; bottom: calc(100% - 4px); max-width: min(250px, calc((100cqw - var(--content-max)) / 2 - 32px)); }
 }
 @container chat (min-width: 1500px) {
-  /* Enough gutter for the bubble to the owl's right: it takes whatever width
-     is left between the owl and the edge of the chat area, up to 250px. */
+  /* Enough gutter for the bubble to the dragon's right: it takes whatever width
+     is left between the dragon and the edge of the chat area, up to 250px. */
   .mascot-bubble { left: calc(100% - var(--mascot-pad-x) + 4px); bottom: 52%; max-width: min(250px, calc((100cqw - var(--content-max)) / 2 - 150px)); }
 }
 .chat:has(.welcome) .mascot--corner {
@@ -774,7 +770,7 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
   .mascot-bubble { display: none; } /* no room beside the input on a phone */
   .chat:not(:has(.welcome)) .messages { padding-bottom: 88px; }
 }
-/* Very short viewports (heavy zoom-in, landscape phones): no room for the owl
+/* Very short viewports (heavy zoom-in, landscape phones): no room for the dragon
    without covering messages, so it steps aside; the status line shows instead. */
 @media (max-height: 480px) {
   .mascot--corner { display: none; }
@@ -826,7 +822,7 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
 :root[data-theme="light"] .prompt-modal::backdrop { background: rgba(27, 30, 51, 0.35); }
 .prompt-modal-form { display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; }
 .prompt-modal-head { display: flex; align-items: center; gap: 12px; }
-.prompt-modal-vi { width: 52px; height: 52px; object-fit: contain; flex: none; }
+.prompt-modal-icon { width: 52px; height: 52px; object-fit: contain; flex: none; }
 .prompt-modal-head h2 { margin: 0; font-size: 20px; font-weight: 750; letter-spacing: -0.01em; }
 .prompt-modal-head p { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
 .prompt-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
@@ -888,3 +884,323 @@ button.game-link { border: 0; font-family: inherit; line-height: inherit; cursor
 .plan-step.plan-active, .plan-step.plan-retry { color: var(--text); }
 .plan-step.plan-failed { color: var(--danger); }
 .plan-detail { color: var(--text-tertiary); }
+
+/* ==========================================================================
+   Polish -- gradients, glow and texture
+   Layered on top of the rules above (same or higher specificity, later in
+   the file), so the base layout stays untouched.
+   ========================================================================== */
+:root { --dot: rgba(255, 255, 255, 0.035); --hero-glow-a: rgba(45, 212, 191, 0.22); --hero-glow-b: rgba(251, 191, 36, 0.08); }
+:root[data-theme="light"] { --dot: rgba(15, 60, 60, 0.07); --hero-glow-a: rgba(20, 184, 166, 0.18); --hero-glow-b: rgba(217, 119, 6, 0.08); }
+
+/* Primary buttons: the teal gradient. Buttons with their own look (ghost,
+   tabs, chips, icons) set their own background and are unaffected. */
+button, .btn, .game-link { background: var(--accent-gradient); }
+button:hover, .btn:hover, .game-link:hover { background: linear-gradient(135deg, var(--accent-hover), var(--accent)); }
+button:active, .btn:active { background: var(--accent-active); }
+button:disabled:hover { background: var(--accent-gradient); }
+.composer button[type="submit"], .game-link:not(.ghost), .prompt-modal-actions button[type="submit"] {
+  box-shadow: 0 4px 16px var(--accent-glow);
+}
+
+/* Sidebar: a faint teal glow in the top corner and gold in the bottom one. */
+.sidebar {
+  background:
+    radial-gradient(120% 30% at 0% 0%, rgba(45, 212, 191, 0.1), transparent 70%),
+    radial-gradient(100% 25% at 100% 100%, rgba(251, 191, 36, 0.05), transparent 70%),
+    var(--sidebar-bg);
+}
+.brand-k {
+  background: linear-gradient(135deg, #2dd4bf, #fbbf24); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.sidebar-new { box-shadow: 0 4px 16px rgba(45, 212, 191, 0.18); }
+.chat-item.active::before { background: linear-gradient(180deg, #2dd4bf, #fbbf24); }
+
+/* Chat area: a soft glow from the top over a faint dot grid. */
+.chat {
+  background:
+    radial-gradient(60% 45% at 50% 0%, var(--accent-soft), transparent 70%),
+    radial-gradient(circle, var(--dot) 1px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--surface-1);
+}
+.chat-head { background: transparent; }
+
+/* Welcome: a halo behind the dragon and a two-color headline word. */
+.welcome-hero::before {
+  content: ""; position: absolute; left: 50%; top: 52%; width: 300px; height: 300px;
+  transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, var(--hero-glow-a), var(--hero-glow-b) 55%, transparent);
+}
+.welcome-hero > .mascot { z-index: 1; }
+.welcome-bubble { z-index: 2; }
+.welcome h2 { font-weight: 800; }
+.welcome h2 .accent-word {
+  background: var(--highlight-gradient); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Composer: lifts with a teal glow while typing. */
+.composer:focus-within { box-shadow: 0 0 0 3px var(--accent-soft), 0 12px 40px var(--accent-glow); }
+
+/* Messages: the user's bubble picks up a hint of the accent. */
+.msg.user { background: linear-gradient(135deg, var(--user-bubble), color-mix(in srgb, var(--user-bubble) 80%, var(--surface-2))); border: 1px solid var(--accent-soft-strong); }
+
+/* Saved prompt cards: a teal-to-gold strip and glow on hover. */
+.welcome .welcome-saved-card { position: relative; overflow: hidden; }
+.welcome .welcome-saved-card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--highlight-gradient); opacity: 0; transition: opacity 0.2s var(--ease);
+}
+.welcome .welcome-saved-card:hover::before { opacity: 1; }
+.welcome .welcome-saved-card:hover { box-shadow: 0 12px 32px var(--accent-glow); }
+.design-summary-card { border-left: 3px solid var(--accent-2); }
+
+/* Saved prompts tab: genre groups with a count, and each game's status. */
+.prompt-group-header { display: flex; align-items: center; gap: 8px; }
+.prompt-group-count {
+  margin-left: auto; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--sidebar-chip-bg); color: var(--sidebar-text); font-size: 10px; letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.prompt-status { color: var(--gold); }
+.prompt-status.is-ready { color: var(--success); }
+
+/* ==========================================================================
+   Glass -- see-through, frosted panels over a softly glowing background
+   ========================================================================== */
+:root {
+  --glass: rgba(22, 29, 36, 0.4);
+  --glass-strong: rgba(16, 22, 28, 0.74);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-blur: blur(18px) saturate(150%);
+  --sidebar-glass: rgba(6, 9, 12, 0.55);
+  --orb-a: rgba(45, 212, 191, 0.3);
+  --orb-b: rgba(251, 191, 36, 0.2);
+  --orb-c: rgba(56, 189, 248, 0.16);
+}
+:root[data-theme="light"] {
+  --glass: rgba(255, 255, 255, 0.55);
+  --glass-strong: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(15, 60, 60, 0.1);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --sidebar-glass: rgba(8, 12, 15, 0.84);
+  --orb-a: rgba(20, 184, 166, 0.2);
+  --orb-b: rgba(245, 158, 11, 0.14);
+  --orb-c: rgba(56, 189, 248, 0.12);
+}
+
+/* The glow the glass sits on: soft teal, gold and sky-blue light. */
+.app {
+  background:
+    radial-gradient(50% 60% at 18% 12%, var(--orb-a), transparent 70%),
+    radial-gradient(45% 55% at 88% 92%, var(--orb-b), transparent 70%),
+    radial-gradient(40% 50% at 70% 25%, var(--orb-c), transparent 70%),
+    var(--bg);
+}
+.chat { background: radial-gradient(circle, var(--dot) 1px, transparent 1.3px) 0 0 / 22px 22px; }
+
+.sidebar {
+  background:
+    radial-gradient(120% 30% at 0% 0%, rgba(45, 212, 191, 0.1), transparent 70%),
+    var(--sidebar-glass);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border-right-color: var(--sidebar-border);
+}
+.sidebar-tabs { background: rgba(0, 0, 0, 0.3); }
+
+.composer, .welcome-bubble, .mascot-bubble, .chips button, .welcome .welcome-saved-card, .msg.assistant, .plan-card,
+.design-summary-card, .icon-btn.ghost {
+  background: var(--glass);
+  border-color: var(--glass-border);
+  box-shadow: var(--glass-shine), var(--shadow-md);
+}
+.composer, .welcome-bubble, .mascot-bubble, .welcome .welcome-saved-card {
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+}
+.msg.assistant, .plan-card, .design-summary-card { box-shadow: var(--glass-shine); }
+.chips button:hover, .welcome .welcome-saved-card:hover { background: var(--glass-strong); }
+.composer:focus-within { background: var(--glass-strong); }
+button.ghost:not(.icon-btn), .game-link.ghost { background: var(--glass); border-color: var(--glass-border); }
+button.ghost:not(.icon-btn):hover, .game-link.ghost:hover { background: var(--glass-strong); }
+
+.prompt-modal {
+  background: var(--glass-strong); border-color: var(--glass-border);
+  -webkit-backdrop-filter: blur(24px) saturate(150%); backdrop-filter: blur(24px) saturate(150%);
+}
+.prompt-modal::backdrop { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+
+/* Header buttons (sidebar toggle, theme): pinned close to the corners rather
+   than indented by the page gutter, as matching rounded-square glass buttons
+   with line icons. */
+.chat-head { padding: 14px 18px; }
+.chat-head .icon-btn {
+  width: 38px; height: 38px; border-radius: 11px; color: var(--text-secondary);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+}
+.chat-head .icon-btn:hover { color: var(--text); background: var(--glass-strong); border-color: var(--border-strong); }
+.chat-head .icon-btn[aria-expanded="false"] { color: var(--accent); }
+.icon-btn svg {
+  width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ==========================================================================
+   Day/night theme switch (index.html #themeToggle)
+   Night: a starry sky with a cratered moon on the right. Day: the moon rolls
+   left and becomes a glowing sun on a blue sky with a drifting cloud.
+   ========================================================================== */
+.theme-switch {
+  position: relative; flex: none; width: 68px; height: 36px; padding: 0; overflow: hidden;
+  border-radius: var(--radius-pill); border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, #060f1f 0%, #10284a 55%, #134e5e 100%);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.4s var(--ease), box-shadow 0.25s var(--ease), transform 0.15s var(--ease);
+}
+.theme-switch:hover {
+  background: linear-gradient(135deg, #060f1f 0%, #10284a 55%, #134e5e 100%);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--accent-soft), 0 6px 20px var(--accent-glow);
+}
+.theme-switch:active { background: linear-gradient(135deg, #060f1f 0%, #10284a 55%, #134e5e 100%); transform: scale(0.95); }
+.theme-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-pill); }
+/* The day sky fades in over the night one (gradients can't transition). */
+.theme-switch::before {
+  content: ""; position: absolute; inset: 0; opacity: 0; transition: opacity 0.5s var(--ease);
+  background: linear-gradient(135deg, #7cc8ff 0%, #8ee3f5 55%, #a7f3d0 100%);
+}
+.theme-switch > span { position: absolute; pointer-events: none; }
+
+/* Stars, on the left while the moon is up. */
+.ts-stars { inset: 0; transition: opacity 0.4s var(--ease), transform 0.5s var(--ease); }
+.ts-stars i { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: #fff; box-shadow: 0 0 4px #fff; }
+.ts-stars i:nth-child(1) { left: 9px; top: 8px; }
+.ts-stars i:nth-child(2) { left: 20px; top: 20px; width: 3px; height: 3px; }
+.ts-stars i:nth-child(3) { left: 29px; top: 9px; }
+.ts-stars i:nth-child(4) { left: 13px; top: 26px; width: 1.5px; height: 1.5px; }
+.ts-stars i:nth-child(5) { left: 33px; top: 25px; width: 1.5px; height: 1.5px; }
+
+/* A cloud, on the right while the sun is up. */
+.ts-cloud {
+  right: 9px; top: 18px; width: 22px; height: 8px; border-radius: 8px; background: #fff;
+  opacity: 0; transform: translateY(10px);
+  transition: opacity 0.4s var(--ease), transform 0.55s var(--ease);
+}
+.ts-cloud::before, .ts-cloud::after { content: ""; position: absolute; border-radius: 50%; background: #fff; }
+.ts-cloud::before { width: 10px; height: 10px; left: 3px; top: -5px; }
+.ts-cloud::after { width: 8px; height: 8px; left: 10px; top: -3px; }
+
+/* The knob: moon at night (right), sun by day (left). */
+.ts-knob {
+  top: 4px; left: 4px; width: 26px; height: 26px; border-radius: 50%;
+  transform: translateX(32px) rotate(0deg);
+  background: radial-gradient(circle at 35% 32%, #fffdf0 0%, #e6e2cc 55%, #c9c4a8 100%);
+  box-shadow: 0 0 10px rgba(210, 225, 255, 0.55), 0 0 22px rgba(120, 170, 255, 0.25), inset -3px -3px 6px rgba(0, 0, 0, 0.18);
+  transition: transform 0.6s cubic-bezier(0.68, -0.35, 0.27, 1.35), background 0.45s var(--ease), box-shadow 0.45s var(--ease);
+}
+.ts-knob i { position: absolute; border-radius: 50%; background: rgba(140, 132, 100, 0.45); box-shadow: inset 1px 1px 1px rgba(0, 0, 0, 0.15); transition: opacity 0.3s var(--ease); }
+.ts-knob i:nth-child(1) { width: 7px; height: 7px; left: 5px; top: 6px; }
+.ts-knob i:nth-child(2) { width: 5px; height: 5px; left: 15px; top: 14px; }
+.ts-knob i:nth-child(3) { width: 3.5px; height: 3.5px; left: 8px; top: 17px; }
+.theme-switch:hover .ts-knob { box-shadow: 0 0 14px rgba(210, 225, 255, 0.8), 0 0 28px rgba(120, 170, 255, 0.4), inset -3px -3px 6px rgba(0, 0, 0, 0.18); }
+
+/* Day. */
+:root[data-theme="light"] .theme-switch { border-color: rgba(255, 255, 255, 0.8); box-shadow: inset 0 2px 5px rgba(0, 60, 90, 0.18), 0 4px 14px rgba(0, 90, 120, 0.15); }
+:root[data-theme="light"] .theme-switch::before { opacity: 1; }
+:root[data-theme="light"] .ts-stars { opacity: 0; transform: translateY(-10px); }
+:root[data-theme="light"] .ts-cloud { opacity: 1; transform: none; }
+:root[data-theme="light"] .ts-knob {
+  transform: translateX(0) rotate(-180deg);
+  background: radial-gradient(circle at 38% 35%, #fffbe0 0%, #fde047 40%, #f59e0b 100%);
+  box-shadow: 0 0 0 3px rgba(253, 224, 71, 0.35), 0 0 16px rgba(251, 191, 36, 0.85), 0 0 30px rgba(251, 191, 36, 0.4);
+}
+:root[data-theme="light"] .ts-knob i { opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .ts-stars i { animation: ts-twinkle 2.6s ease-in-out infinite; }
+  .ts-stars i:nth-child(2) { animation-delay: 0.6s; }
+  .ts-stars i:nth-child(3) { animation-delay: 1.3s; }
+  .ts-stars i:nth-child(4) { animation-delay: 1.9s; }
+  .ts-stars i:nth-child(5) { animation-delay: 0.9s; }
+  :root[data-theme="light"] .ts-cloud { animation: ts-drift 5s ease-in-out infinite; }
+  :root[data-theme="light"] .ts-knob { animation: ts-glow 3s ease-in-out infinite; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ts-knob, .ts-stars, .ts-cloud, .theme-switch::before { transition-duration: 0.01s; }
+}
+@keyframes ts-twinkle { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.25; transform: scale(0.6); } }
+@keyframes ts-drift { 0%, 100% { translate: 0 0; } 50% { translate: -4px 0; } }
+@keyframes ts-glow {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(253, 224, 71, 0.35), 0 0 16px rgba(251, 191, 36, 0.85), 0 0 30px rgba(251, 191, 36, 0.4); }
+  50% { box-shadow: 0 0 0 5px rgba(253, 224, 71, 0.25), 0 0 22px rgba(251, 191, 36, 1), 0 0 40px rgba(251, 191, 36, 0.5); }
+}
+
+/* ==========================================================================
+   Chat list: action toolbar, pin marks and the rename box
+   ========================================================================== */
+/* Pin / rename / delete float in a small glass toolbar that slides in on hover. */
+.chat-item-actions {
+  align-self: center; gap: 2px; padding: 3px; margin-right: 6px;
+  border-radius: 10px; background: rgba(10, 15, 19, 0.82); border: 1px solid var(--sidebar-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transform: translateX(6px); transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.chat-item:hover .chat-item-actions, .chat-item:focus-within .chat-item-actions { transform: none; }
+.chat-item-action {
+  width: 26px; height: 26px; border-radius: 7px; border: 0;
+  color: var(--sidebar-text-secondary); background: transparent;
+  transition: color 0.15s var(--ease), background-color 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.chat-item-action svg {
+  width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.chat-item-action:hover { color: #fff; background: rgba(255, 255, 255, 0.08); transform: translateY(-1px); }
+.chat-item-action:active { transform: scale(0.92); }
+.chat-item-action.pin-btn:hover { color: var(--gold); background: rgba(251, 191, 36, 0.14); }
+.chat-item-action.pin-btn.pinned { color: var(--gold); }
+.chat-item-action.pin-btn.pinned .fillable { fill: currentColor; fill-opacity: 0.35; }
+.chat-item-action.rename-btn:hover { color: var(--accent); background: var(--accent-soft); }
+.chat-item-action.danger:hover { color: #ff6b7d; background: rgba(255, 107, 125, 0.15); }
+.chat-item-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 7px; }
+
+/* A gold pin before a pinned chat's title, and on the Pinned heading. */
+.pin-mark { display: inline-flex; flex: none; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; color: var(--gold); }
+.pin-mark svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.pin-mark .fillable { fill: currentColor; fill-opacity: 0.4; }
+.chat-group-header.is-pinned { display: flex; align-items: center; color: var(--gold); }
+.chat-group-header.is-pinned .pin-mark { width: 11px; height: 11px; }
+
+/* Renaming: a glowing teal field, with the keys to save or cancel underneath. */
+.chat-item.is-renaming { background: var(--sidebar-active); box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.25); }
+.chat-item.is-renaming .chat-item-actions { display: none; }
+.chat-item .chat-item-rename {
+  width: 100%; margin: 0 0 5px; padding: 7px 10px;
+  font: inherit; font-size: 13.5px; font-weight: 600; color: #fff; caret-color: var(--accent);
+  background: rgba(45, 212, 191, 0.08); border: 1px solid var(--accent); border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.15), 0 0 18px rgba(45, 212, 191, 0.25);
+}
+.chat-item .chat-item-rename::selection { background: rgba(45, 212, 191, 0.35); }
+.chat-item .chat-item-rename:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.22), 0 0 22px rgba(45, 212, 191, 0.35); }
+.chat-item-meta kbd {
+  display: inline-block; padding: 0 5px; border-radius: 4px; font: inherit; font-size: 10.5px; font-weight: 700;
+  color: var(--accent); background: rgba(45, 212, 191, 0.12); border: 1px solid rgba(45, 212, 191, 0.3);
+}
+
+/* ==========================================================================
+   Dragon 3D head turn (dragon.js layers, mascot.js --lx / --ly)
+   Layers nearer the viewer shift further toward the cursor and the wings
+   shift the other way, so the head seems to turn in 3D.
+   ========================================================================== */
+.mascot-svg .d-back  { transform: translate(calc(var(--lx, 0) * -3px), calc(var(--ly, 0) * -1.5px)); }
+.mascot-svg .d-horns { transform: translate(calc(var(--lx, 0) * 1px), calc(var(--ly, 0) * 0.6px)); }
+.mascot-svg .d-head  { transform: translate(calc(var(--lx, 0) * 2.2px), calc(var(--ly, 0) * 1.6px)); }
+.mascot-svg .d-face  { transform: translate(calc(var(--lx, 0) * 5px), calc(var(--ly, 0) * 3.4px)); }
+.mascot-svg .d-front { transform: translate(calc(var(--lx, 0) * 1.4px), calc(var(--ly, 0) * 0.8px)); }
+/* Pupils follow the cursor inside each eye (mascot.js --ex / --ey). */
+.mascot-svg .d-pupil { transform: translate(calc(var(--ex, 0) * 3.4px), calc(var(--ey, 0) * 4.4px)); }
+/* Welcome cards: a long game name wraps to a second line instead of being cut off by its tag. */
+.welcome-saved-top { align-items: flex-start; }
+.welcome-saved-title {
+  white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3;
+}
+.welcome-saved-tag { margin-top: 1px; }
