@@ -10,17 +10,20 @@ Two different things in this repo are both organized into `frontend/`/`backend/`
 
 1. Copy `.env.example` to `.env` and set `PRIMARY_API_KEY`.
 2. `npm start`
-3. Open http://localhost:3000
+3. Open http://localhost:3000 for the landing page, or http://localhost:3000/chat for the chat app
 
 `npm test` runs an end-to-end test against a mock LLM API (no key needed).
 
 ## This app's layout
 
 ```
-frontend/                the chat UI -- plain HTML/CSS/JS, no build step
-  index.html
+frontend/                the UI -- plain HTML/CSS/JS, no build step
+  index.html              landing page at / (links into the chat as /chat?prompt=<idea>)
+  chat.html               the chat app, served at /chat
   src/
-    main.js               entry point (chat streaming, rendering, planning feed, game-tab opening)
+    landing.js            landing page: template tabs, project file explorer, theme switch
+    main.js               chat entry point (chat streaming, rendering, planning feed, game-tab opening)
+    styles/landing.css
     styles/main.css
 backend/
   src/
