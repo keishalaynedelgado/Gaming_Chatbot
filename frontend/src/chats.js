@@ -948,6 +948,7 @@ function initSidebar({ onSelect, onNewDraft, onPickPrompt, onNewPrompt, onPrompt
 
   return {
     getActiveId: () => store.activeChatId,
+    newChat: startNewChat,
     recordActivity: (id, state) => upsert(id, state, { bump: true }),
     refreshCache: (id, state) => upsert(id, state, { bump: false }),
     // Updates a chat's list entry mid-turn (title, new session, final reply)

@@ -164,6 +164,7 @@ body {
 .sidebar-brand {
   display: flex; align-items: center; gap: 10px; min-width: var(--sidebar-w);
   padding: 16px 20px 8px; flex: none;
+  color: inherit; text-decoration: none;
 }
 .sidebar-brand-logo { width: 42px; height: 42px; flex: none; }
 .sidebar-brand-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

@@ -4,11 +4,12 @@ const path = require('node:path');
 const { json } = require('./http');
 const { FRONTEND_DIR, MIME } = require('../config/constants');
 
-// Serves the chat UI's static files straight out of frontend/. There's no
-// build step -- it's plain HTML/CSS/JS, so this is the only "frontend server"
-// the app needs.
+// Serves the UI's static files straight out of frontend/. There's no build
+// step -- it's plain HTML/CSS/JS, so this is the only "frontend server" the
+// app needs. `/` is the landing page; the chat app itself lives at `/chat`.
+const PAGES = { '/': 'index.html', '/chat': 'chat.html' };
 function serveStatic(res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^[/\\]+/, '');
+  const rel = PAGES[pathname] || decodeURIComponent(pathname).replace(/^[/\\]+/, '');
   const file = path.resolve(FRONTEND_DIR, rel);
   if (file !== FRONTEND_DIR && !file.startsWith(FRONTEND_DIR + path.sep)) return json(res, 403, { error: 'Forbidden' });
   fs.readFile(file, (err, data) => {

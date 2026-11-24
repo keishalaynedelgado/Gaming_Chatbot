@@ -1083,6 +1083,15 @@ const sidebar = initSidebar({
   },
 });
 checkHealth();
+// The landing page (index.html) links here as /chat?prompt=<idea>: that idea
+// starts a fresh chat, ready in the message box, instead of reopening the
+// last chat. The query is dropped so a reload doesn't fill it in again.
+const landingPrompt = new URLSearchParams(location.search).get('prompt')?.trim().slice(0, 4000);
 const initialId = sidebar.getActiveId();
-if (initialId) loadChat(initialId);
+if (landingPrompt) {
+  history.replaceState(null, '', location.pathname);
+  sidebar.newChat();
+  els.input.value = landingPrompt;
+  autoGrow();
+} else if (initialId) loadChat(initialId);
 else startNewDraft();

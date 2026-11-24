@@ -5,140 +5,294 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#0b0f12">
-  <title>K Games</title>
+  <meta name="description" content="K Games is a chatbot that designs, builds and tests complete web games with you, then exports them as apps.">
+  <title>K Games — Build playable games by chatting</title>
   <link rel="icon" type="image/svg+xml" href="./src/assets/dragon/dragon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./src/styles/main.css">
+  <link rel="stylesheet" href="./src/styles/landing.css">
   <script>
-    // Applied synchronously, before first paint, so a saved light-theme choice
-    // never flashes dark first. Kept out of main.js (a deferred module) on purpose.
+    // Same saved theme as the chat app (gc_theme), applied before first paint.
     try {
       if (localStorage.getItem('gc_theme') === 'light') document.documentElement.setAttribute('data-theme', 'light');
     } catch (e) { /* storage unavailable; default (dark) theme is used */ }
   </script>
 </head>
 <body>
-  <div class="app" id="app">
-    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
-    <nav class="sidebar" id="sidebar" aria-label="Chat history">
-      <div class="sidebar-brand">
-        <img class="sidebar-brand-logo" src="./src/assets/dragon/dragon.svg" alt="" aria-hidden="true">
-        <div class="sidebar-brand-text">
-          <h1><span class="brand-k">K</span> Games</h1>
-          <span class="sidebar-brand-sub">a chatbot that can generate games</span>
-        </div>
-      </div>
-      <div class="sidebar-head">
-        <button class="sidebar-new" id="newChat" type="button">
-          <span class="sidebar-new-main"><span class="sidebar-new-icon" aria-hidden="true">+</span>New chat</span>
-          <span class="sidebar-new-shortcut" aria-hidden="true">⌥N</span>
+  <!-- 1. Nav -->
+  <header class="nav">
+    <div class="frame nav-inner">
+      <a class="brand" href="/">
+        <img src="./src/assets/dragon/dragon.svg" alt="" width="30" height="30">
+        <span><b>K</b> Games</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#templates">Templates</a>
+        <a href="#builds">How it builds</a>
+        <a href="#features">Features</a>
+        <a href="#stack">Stack</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="icon-btn" id="themeToggle" type="button" aria-label="Switch theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
         </button>
+        <a class="btn btn-primary btn-sm" href="/chat">Open the app</a>
       </div>
-      <div class="sidebar-search">
-        <input type="search" id="chatSearch" placeholder="Search chats…" aria-label="Search chats">
-      </div>
-      <div class="sidebar-tabs" id="sidebarTabs" role="tablist" aria-label="Sidebar view">
-        <button class="sidebar-tab" id="tabChats" type="button" role="tab" aria-selected="true" aria-controls="chatList">Chats <span class="sidebar-tab-count" id="chatCount">0</span></button>
-        <button class="sidebar-tab" id="tabPrompts" type="button" role="tab" aria-selected="false" aria-controls="chatList">Saved prompts <span class="sidebar-tab-count" id="promptCount">0</span></button>
-      </div>
-      <div class="sidebar-error" id="sidebarError" role="alert" hidden></div>
-      <ul class="chat-list" id="chatList" aria-label="Previous chats"></ul>
-      <div class="sidebar-foot">
-        <button class="sidebar-trash-toggle" id="chatTrashToggle" type="button" aria-pressed="false">🗑 Recently deleted</button>
-      </div>
-    </nav>
+    </div>
+  </header>
 
-    <section class="chat" aria-label="Chat">
-      <header class="chat-head">
-        <div class="chat-head-left">
-          <button class="ghost icon-btn" id="sidebarToggle" type="button" aria-label="Toggle chat history" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 4v16"/></svg></button>
+  <main>
+    <!-- 2. Hero -->
+    <section class="frame hero">
+      <div class="hero-copy">
+        <span class="tag mono">#game-factory</span>
+        <h1>Build playable games <span class="grad">by chatting</span></h1>
+        <p class="lead">K Games is a chatbot with a team of agents behind it. Describe a game, confirm the design, and it builds, tests and hands you a game you can play, download or install as an app.</p>
+        <form class="prompt-box" action="/chat" method="get">
+          <span class="prompt-caret mono" aria-hidden="true">&gt;</span>
+          <label class="sr-only" for="heroPrompt">Describe a game</label>
+          <input id="heroPrompt" name="prompt" class="mono" type="text" maxlength="4000" placeholder="a neon snake game with power-ups" autocomplete="off">
+          <button class="btn btn-primary" type="submit">Build it</button>
+        </form>
+        <div class="hero-meta mono">
+          <span>Plain HTML · CSS · JS</span><span class="dot"></span>
+          <span>Node 20+</span><span class="dot"></span>
+          <span>Web · Android · Windows · iPhone · Mac</span>
         </div>
-        <div class="head-actions">
-          <button class="theme-switch" id="themeToggle" type="button" aria-label="Switch to light theme">
-            <span class="ts-stars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-            <span class="ts-cloud" aria-hidden="true"></span>
-            <span class="ts-knob" aria-hidden="true"><i></i><i></i><i></i></span>
-          </button>
-        </div>
-      </header>
+      </div>
 
-      <div class="banner" id="banner" hidden></div>
-
-      <main class="messages" id="messages" aria-live="polite"></main>
-
-      <div class="status" id="status" role="status" hidden></div>
-
-      <form class="composer" id="composer" autocomplete="off">
-        <div class="composer-main">
-          <div class="saved-chip" id="savedChip" hidden>
-            <span class="saved-chip-text">⚡ Saved prompt<span id="savedChipTitle"></span> — builds instantly on Send</span>
-            <button type="button" class="saved-chip-close" id="savedChipClose" aria-label="Use as a normal message instead">✕</button>
-          </div>
-          <textarea id="input" rows="1" maxlength="4000" placeholder="Describe a game idea, or just chat…" aria-label="Message"></textarea>
-          <div class="composer-tools">
-            <button type="button" class="composer-tool" id="savePrompt" title="Save what's in the message box as a build-ready prompt">🔖 Save prompt</button>
-            <div class="composer-hint" aria-hidden="true">Enter send · Shift+Enter new line</div>
-          </div>
-        </div>
-        <button type="submit" id="send">Send</button>
-        <button type="button" id="stop" class="ghost" hidden>Stop</button>
-      </form>
+      <figure class="hero-demo" aria-label="Example: a game being built in a chat">
+        <div class="demo-bar"><span></span><span></span><span></span><em class="mono">k-games / new chat</em></div>
+        <ol class="thread">
+          <li class="msg msg-user"><b>You</b><p>Make a neon snake game with power-ups.</p></li>
+          <li class="msg"><b>Designer</b><p>Arrow keys or swipe? And should walls end the run, or wrap around?</p></li>
+          <li class="msg msg-user"><b>You</b><p>Swipe on phones, walls wrap.</p></li>
+          <li class="msg"><b>Planner</b><p>Design summary ready: 3 power-ups, speed ramps every 5 apples. Build it?</p></li>
+          <li class="msg steps">
+            <b>Builder</b>
+            <ul class="mono">
+              <li><i class="ok"></i>controls &amp; swipe input</li>
+              <li><i class="ok"></i>movement, scoring, power-ups</li>
+              <li><i class="ok"></i>synth audio</li>
+              <li><i class="ok"></i>QA: syntax, imports, restart</li>
+            </ul>
+          </li>
+          <li class="game-card">
+            <div class="game-icon" aria-hidden="true"></div>
+            <div>
+              <strong>Neon Snake</strong>
+              <span class="mono">v1 · QA passed</span>
+            </div>
+            <span class="pill pill-ok">Ready to play</span>
+          </li>
+        </ol>
+      </figure>
     </section>
-  </div>
-  <!-- Save Prompt modal: a saved prompt is a finalized, build-ready game prompt
-       (see main.js openSavePromptModal). -->
-  <dialog class="prompt-modal" id="savePromptModal" aria-labelledby="savePromptHeading">
-    <form class="prompt-modal-form" id="savePromptForm" method="dialog" novalidate>
-      <div class="prompt-modal-head">
-        <img class="prompt-modal-icon" src="./src/assets/dragon/dragon.svg" alt="" aria-hidden="true">
-        <div>
-          <h2 id="savePromptHeading">Save Prompt</h2>
-          <p>Saved prompts are build-ready: using one starts building the game right away — no questions.</p>
+
+    <!-- 3. Templates -->
+    <section class="frame section" id="templates">
+      <div class="section-head">
+        <h2>Arcade hits, brain teasers, or something only you would think of</h2>
+        <p>Start from a template prompt, or describe your own from scratch.</p>
+        <a class="btn btn-primary" id="templateCta" href="/chat?prompt=">Use the arcade template</a>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Template examples">
+        <button class="tab" role="tab" type="button" id="tab-arcade" aria-controls="tpl-panel" aria-selected="true" data-tpl="arcade">Arcade</button>
+        <button class="tab" role="tab" type="button" id="tab-platformer" aria-controls="tpl-panel" aria-selected="false" data-tpl="platformer">Platformer</button>
+        <button class="tab" role="tab" type="button" id="tab-puzzle" aria-controls="tpl-panel" aria-selected="false" data-tpl="puzzle">Puzzle</button>
+      </div>
+      <div class="grid-2 bordered" id="tpl-panel" role="tabpanel" aria-labelledby="tab-arcade">
+        <div class="cell">
+          <ol class="thread thread-static" id="tplThread"></ol>
+        </div>
+        <ul class="cell points" id="tplPoints"></ul>
+      </div>
+    </section>
+
+    <!-- 4. Build runs -->
+    <section class="frame section" id="builds">
+      <div class="section-head">
+        <h2>See every step of every build</h2>
+        <p>A build runs as a tracked plan. Each step shows up live as it starts, finishes, retries or is skipped, so you never stare at a spinner wondering what is going on.</p>
+      </div>
+      <figure class="trace bordered" aria-label="Example build timeline">
+        <div class="trace-row"><span class="mono">route</span><div class="bar" style="--s:0;--w:6"></div><em class="mono">0.8s</em></div>
+        <div class="trace-row"><span class="mono">design summary</span><div class="bar" style="--s:6;--w:14"></div><em class="mono">2.1s</em></div>
+        <div class="trace-row"><span class="mono">build project</span><div class="bar bar-main" style="--s:20;--w:46"></div><em class="mono">31.4s</em></div>
+        <div class="trace-row"><span class="mono">placeholder art</span><div class="bar" style="--s:24;--w:18"></div><em class="mono">6.0s</em></div>
+        <div class="trace-row"><span class="mono">static checks</span><div class="bar" style="--s:66;--w:5"></div><em class="mono">0.3s</em></div>
+        <div class="trace-row"><span class="mono">repair</span><div class="bar bar-retry" style="--s:71;--w:11"></div><em class="mono">retry 1/2</em></div>
+        <div class="trace-row"><span class="mono">QA review</span><div class="bar" style="--s:82;--w:14"></div><em class="mono">5.2s</em></div>
+        <div class="trace-row"><span class="mono">save v1</span><div class="bar bar-ok" style="--s:96;--w:4"></div><em class="mono">done</em></div>
+        <figcaption class="mono">Steps whose inputs are ready run side by side. A failed step is retried on its own, never the whole build.</figcaption>
+      </figure>
+      <div class="grid-3 bordered">
+        <div class="cell"><h3>Every step, live</h3><p>The progress card lists the whole plan with what's done, running and left, built from real milestones like controls, scoring and audio.</p></div>
+        <div class="cell"><h3>Fixes its own mistakes</h3><p>Code that fails to compile or imports a missing file goes back to the builder for repair, up to twice, before you ever see it.</p></div>
+        <div class="cell"><h3>QA before you play</h3><p>A review pass mentally tests logic, controls, win and lose, and restart, and can patch just the files that need it.</p></div>
+      </div>
+    </section>
+
+    <!-- 5. Real projects -->
+    <section class="frame section" id="projects">
+      <div class="section-head">
+        <h2>A real project, not a single file</h2>
+        <p>Every game is an organized project of plain ES modules. Ask for a change and only the files it touches are rewritten; everything else carries over.</p>
+      </div>
+      <div class="explorer bordered">
+        <ul class="files mono" id="fileList" role="listbox" aria-label="Project files"></ul>
+        <div class="file-view">
+          <div class="file-view-head"><span class="mono" id="filePath"></span><span class="pill" id="fileBadge"></span></div>
+          <p id="fileNote"></p>
+          <pre class="mono"><code id="fileCode"></code></pre>
         </div>
       </div>
-      <label class="prompt-field">
-        <span>Name</span>
-        <input type="text" id="savePromptName" maxlength="80" placeholder="e.g. Neon Snake" autocomplete="off">
-      </label>
-      <label class="prompt-field">
-        <span>Prompt</span>
-        <textarea id="savePromptText" rows="7" maxlength="20000" placeholder="Describe the game exactly as it should be built — genre, controls, rules, look and feel. Anything you leave out gets a sensible default."></textarea>
-      </label>
-      <div class="prompt-field-row">
-        <label class="prompt-field">
-          <span>Type</span>
-          <select id="savePromptType">
-            <option value="any">Any game</option>
-            <option value="arcade">Arcade</option>
-            <option value="platformer">Platformer</option>
-            <option value="puzzle">Puzzle</option>
-            <option value="shooter">Shooter</option>
-            <option value="racing">Racing</option>
-            <option value="strategy">Strategy</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label class="prompt-field">
-          <span>Run automatically</span>
-          <select id="savePromptRunAuto">
-            <option value="no">No — put it in the chat box first</option>
-            <option value="yes">Yes — build as soon as it's clicked</option>
-          </select>
-        </label>
+      <div class="grid-3 bordered">
+        <div class="cell"><h3><span class="pill">one file</span></h3><p>Say “just a one-file prototype” and you get a single self-contained index.html.</p></div>
+        <div class="cell"><h3><span class="pill pill-accent">multi-file</span></h3><p>The default: components, scenes, game logic and docs, each in the same folder every time.</p></div>
+        <div class="cell"><h3><span class="pill pill-gold">versioned</span></h3><p>Every build and improvement is saved as a new version, so nothing you liked is ever lost.</p></div>
       </div>
-      <label class="prompt-check">
-        <input type="checkbox" id="savePromptShowHome">
-        <span>Show on the New Chat screen</span>
-      </label>
-      <div class="prompt-modal-error" id="savePromptError" role="alert" hidden></div>
-      <div class="prompt-modal-actions">
-        <button type="button" class="ghost" id="savePromptCancel">Cancel</button>
-        <button type="submit" id="savePromptSubmit">Save Prompt</button>
+    </section>
+
+    <!-- 6. Quick start CTA -->
+    <section class="frame section cta-split">
+      <div>
+        <h2>Play your first game in a few minutes</h2>
+        <p class="lead">Describe it in a sentence, answer only the questions that matter, and it opens in a new tab ready to play.</p>
+        <div class="mini-features">
+          <div><h3>Asks only what's missing</h3><p>The designer never invents mechanics you didn't ask for.</p></div>
+          <div><h3>You confirm the design</h3><p>Nothing is built until you say yes to the design summary.</p></div>
+        </div>
+        <a class="btn btn-primary" href="/chat">Start a chat</a>
       </div>
-    </form>
-  </dialog>
-  <script type="module" src="./src/main.js"></script>
+      <figure class="summary-card" aria-label="Example game design summary">
+        <span class="mono label">Game Design Summary</span>
+        <h3>Neon Snake</h3>
+        <dl>
+          <dt>Genre</dt><dd>Arcade</dd>
+          <dt>Controls</dt><dd>Arrow keys, swipe on touch</dd>
+          <dt>Goal</dt><dd>Eat apples, grow, beat your best score</dd>
+          <dt>Twist</dt><dd>Walls wrap; 3 power-ups</dd>
+          <dt>Look</dt><dd>Neon on black, glow trails</dd>
+        </dl>
+        <div class="summary-actions"><span class="btn btn-primary btn-sm">Build it</span><span class="btn btn-ghost btn-sm">Change something</span></div>
+      </figure>
+    </section>
+
+    <!-- 7. Own it -->
+    <section class="frame section">
+      <div class="section-head">
+        <h2>Own your games</h2>
+        <p>Keep the code, ship it anywhere, and keep your data on your own machine.</p>
+      </div>
+      <div class="grid-3 bordered">
+        <article class="cell card">
+          <div class="art art-code" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <h3>Own the code</h3>
+          <p>Download the whole project as a zip, including docs and any backend, and keep building on it however you like.</p>
+          <a class="more" href="/chat">Learn more →</a>
+        </article>
+        <article class="cell card">
+          <div class="art art-devices" aria-hidden="true"><span></span><span></span><span></span></div>
+          <h3>Own the app</h3>
+          <p>Export any game as an Android APK, a Windows app or installer, an iPhone &amp; iPad app, or a Mac app, each with its own icon.</p>
+          <a class="more" href="/chat">Learn more →</a>
+        </article>
+        <article class="cell card">
+          <div class="art art-lock" aria-hidden="true"><span></span></div>
+          <h3>Own the data</h3>
+          <p>Chats live in your PostgreSQL database, games on your disk, and the server only listens on your own machine.</p>
+          <a class="more" href="/chat">Learn more →</a>
+        </article>
+      </div>
+    </section>
+
+    <!-- 8. Feature grid -->
+    <section class="frame section" id="features">
+      <div class="section-head"><h2>Everything you need to ship a game</h2></div>
+      <div class="grid-3 bordered">
+        <article class="cell tile">
+          <div class="tile-art radar" aria-hidden="true">
+            <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+            <img src="./src/assets/dragon/dragon.svg" alt="">
+            <em class="mono n1">APK</em><em class="mono n2">EXE</em><em class="mono n3">iOS</em><em class="mono n4">Mac</em><em class="mono n5">Web</em>
+          </div>
+          <h3>One game, every screen</h3>
+          <p>Play in the browser, or export it as an app for phones, tablets and computers.</p>
+        </article>
+        <article class="cell tile">
+          <div class="tile-art stack-cards" aria-hidden="true">
+            <span><b>Neon Snake</b><i>Arcade</i></span>
+            <span><b>Sky Hopper</b><i>Platformer</i></span>
+            <span><b>Tile Twist</b><i>Puzzle</i></span>
+          </div>
+          <h3>Saved prompts that build instantly</h3>
+          <p>Finished games are saved as build-ready prompts. Click one and it opens, or rebuilds with no questions.</p>
+        </article>
+        <article class="cell tile">
+          <div class="tile-art sandbox" aria-hidden="true">
+            <span class="box mono">game</span><span class="wall"></span><span class="box mono">your API</span>
+          </div>
+          <h3>Sandboxed by default</h3>
+          <p>Generated games run in a locked-down sandbox with no network access, so they can never reach your chats.</p>
+        </article>
+      </div>
+      <div class="grid-3 bordered features-text">
+        <div class="cell"><h3>Placeholder art &amp; synth audio</h3><p>Every build ships with visuals and sound, no asset hunting required.</p></div>
+        <div class="cell"><h3>Improve without starting over</h3><p>Ask for changes in plain words. Earlier decisions stay put.</p></div>
+        <div class="cell"><h3>Its own app icon</h3><p>The first export draws an icon from the game's design and reuses it after.</p></div>
+        <div class="cell"><h3>Stop any time</h3><p>Stop a reply mid-build; other chats keep going in the background.</p></div>
+        <div class="cell"><h3>Chat history &amp; search</h3><p>Pin, rename, search and restore chats from the sidebar.</p></div>
+        <div class="cell"><h3>Light &amp; dark</h3><p>A theme switch that remembers your choice across the site and app.</p></div>
+      </div>
+    </section>
+
+    <!-- 9. Stack -->
+    <section class="frame section" id="stack">
+      <div class="section-head">
+        <h2>Built on simple primitives</h2>
+        <p>One Node process, no framework, no build step. Each piece does one job.</p>
+      </div>
+      <div class="stack bordered">
+        <div class="stack-row"><b>Server</b><span>A small Node HTTP server that serves the app and streams every reply.</span><em class="mono">node 20</em></div>
+        <div class="stack-row"><b>Agents</b><span>Intent, designer, planner, builder and QA agents, routed one message at a time.</span><em class="mono">orchestrator</em></div>
+        <div class="stack-row"><b>Model gateway</b><span>Any OpenAI-compatible chat API, streamed over server-sent events.</span><em class="mono">llm</em></div>
+        <div class="stack-row"><b>Storage</b><span>Chats in PostgreSQL; game versions as real files on disk.</span><em class="mono">postgres</em></div>
+        <div class="stack-row"><b>Exporter</b><span>Packages a game's frontend as Android, Windows, iPhone, Mac and web apps.</span><em class="mono">exporter</em></div>
+        <div class="stack-row"><b>Logging</b><span>Structured logs, with optional Graylog shipping.</span><em class="mono">graylog</em></div>
+      </div>
+      <div class="targets">
+        <span class="mono label">Export targets</span>
+        <ul class="chips mono">
+          <li>Web</li><li>Android APK</li><li>Windows EXE</li><li>Windows Setup</li><li>iPhone &amp; iPad</li><li>Mac</li><li>Project zip</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 10. Final CTA -->
+    <section class="frame section final-cta">
+      <img src="./src/assets/dragon/dragon.svg" alt="" width="72" height="72">
+      <h2>Build your first game today</h2>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="/chat">Start a chat</a>
+        <a class="btn btn-ghost" href="/chat?prompt=Surprise%20me%20with%20a%20game%20idea">Surprise me</a>
+      </div>
+    </section>
+  </main>
+
+  <!-- 11. Footer -->
+  <footer class="frame footer">
+    <a class="brand" href="/"><img src="./src/assets/dragon/dragon.svg" alt="" width="22" height="22"><span><b>K</b> Games</span></a>
+    <nav aria-label="Footer">
+      <a href="/chat">App</a>
+      <a href="#templates">Templates</a>
+      <a href="#features">Features</a>
+      <a href="#stack">Stack</a>
+    </nav>
+    <span class="mono muted">a chatbot that can generate games</span>
+  </footer>
+
+  <script type="module" src="./src/landing.js"></script>
 </body>
 </html>
