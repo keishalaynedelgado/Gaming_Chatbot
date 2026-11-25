@@ -1,6 +1,6 @@
-# Game Creator Chatbot
+# K Games — Game Creator Chatbot
 
-A chat app where one chatbot talks to you while cooperating agents design, build and test complete web games behind the scenes. No npm dependencies (Node 20+).
+A chat app where one chatbot talks to you while cooperating agents design, build and test complete web games behind the scenes. Needs Node 20+ and PostgreSQL; the only npm dependency is `pg`.
 
 Two different things in this repo are both organized into `frontend/`/`backend/` folders, and it's worth being clear which is which:
 - **This app itself** — the chatbot tool — is laid out that way at the repo root (see "This app's layout" below).
@@ -8,11 +8,12 @@ Two different things in this repo are both organized into `frontend/`/`backend/`
 
 ## Run
 
-1. Copy `.env.example` to `.env` and set `PRIMARY_API_KEY`.
-2. `npm start`
-3. Open http://localhost:3000 for the landing page, or http://localhost:3000/chat for the chat app
+1. `npm install`
+2. Copy `.env.example` to `.env`, then set `DATABASE_URL` (a PostgreSQL database) and `PRIMARY_API_KEY`. `SCX_API_KEY` is an optional fallback provider, used only if the primary one fails.
+3. `npm start` (the database schema is created automatically on startup)
+4. Open http://localhost:3000 for the landing page, or http://localhost:3000/chat for the chat app
 
-`npm test` runs an end-to-end test against a mock LLM API (no key needed).
+`npm test` runs an end-to-end test against a mock LLM API (no key needed). It needs a PostgreSQL test database, set with `TEST_DATABASE_URL`.
 
 ## This app's layout
 
@@ -23,6 +24,10 @@ frontend/                the UI -- plain HTML/CSS/JS, no build step
   src/
     landing.js            landing page: template tabs, project file explorer, theme switch
     main.js               chat entry point (chat streaming, rendering, planning feed, game-tab opening)
+    chats.js              the left sidebar: the list of past chats
+    dragon.js             the K Games dragon mascot, drawn as inline SVG
+    mascot.js             the floating, animated mascot built from dragon.js's poses
+    assets/dragon/        mascot artwork
     styles/landing.css
     styles/main.css
 backend/
@@ -36,18 +41,26 @@ backend/
       healthController.js    GET /api/health
     services/                the actual logic, framework-agnostic
       orchestrator.js         routing between agents and the build/QA pipeline
-      llm.js                  the PRIMARY API client (chat/completions, SSE streaming)
+      llm.js                  the LLM client (chat/completions, SSE streaming): primary provider, with SCX as fallback
       prompts.js              all agent prompts, including the generated-project structure rules
       qa.js                   parses the Builder's <files> output, validates paths, static-checks a project
-      plan.js                 turns the Builder's streamed code into Planning-feed milestones
+      planRunner.js           runs a build as a tracked plan of steps, reported to the Planning feed
+      bundler.js              inlines a game's ES modules into one script for the live preview and apps
+      exporter.js             builds the exported apps (APK, EXE, Setup, iPhone & iPad, Mac)
+      iconDesigner.js         has the AI draw each game's app icon as an SVG
+      appIcon.js              renders app icons as PNG / ICO / ICNS
       zip.js                  minimal dependency-free ZIP writer, used by "Download project"
+      db.js                   PostgreSQL connection and schema (chat sessions and messages)
       store.js                per-session state; each game version is saved under projects/<session>/v<N>/
+    templates/                app shells used by the exporter (android/, windows/, mac/, web/)
     middleware/
       http.js                 small json()/readBody() helpers shared by controllers
       staticFiles.js           serves frontend/ (there's no separate frontend server/process)
     utils/env.js              minimal .env loader (no dotenv dependency)
+    utils/logger.js           console logger
     config/constants.js       PORT, MIME map, the generated-game CSP, etc.
-test/run.js                  end-to-end test against a mock LLM API
+    config/savedGames.md      how the chatbot handles saved game templates (read on every request)
+test/run.js                  end-to-end test against a mock LLM API and a PostgreSQL test database
 projects/                    generated games live here (gitignored runtime data, not source)
 .env / .env.example           at the repo root: the only real runtime is the backend, so there's one shared .env
 package.json                  one root package.json runs the whole app (`npm start` / `npm test`); frontend/backend
@@ -69,9 +82,9 @@ Every message goes through the **Intent Agent**, which picks a route. The server
 | improve | Game Builder | Edits the existing project and keeps earlier decisions |
 | new_game | | Starts a fresh project only when you ask for one |
 
-**QA Agent.** Generated code first goes through deterministic checks (every `.js` file is syntax-compiled, relative imports are resolved and must exist, `frontend/index.html` is verified). Broken code goes back to the builder for repair, up to twice — the repair reply only needs to resend the files it's fixing. An LLM review then mentally tests logic, controls, win/lose and restart, and can apply a minimal patch (again, only the files it changed). Set `QA_REVIEW=0` to skip that review.
+**QA Agent.** Generated code first goes through deterministic checks (every `.js` file is syntax-compiled, relative imports are resolved and must exist, `frontend/index.html` is verified). Broken code goes back to the builder for repair, up to twice — the repair reply only needs to resend the files it's fixing. An optional LLM review can then mentally test logic, controls, win/lose and restart, and apply a minimal patch (again, only the files it changed). It is off by default for speed; set `QA_REVIEW=1` to turn it on.
 
-**Planning feed.** While a discover/plan/build/improve request is running, a small muted checklist appears above the reply (steps get a ✓ once done, a spinner while active). It's built entirely from user-facing milestones — the routing stage, and for the builder, keyword milestones detected in the code as it's written (controls, movement, scoring, enemies, audio, ...) — never the model's private reasoning. It's per-turn and not persisted; reloading the chat won't bring old planning cards back, only the messages themselves. See `backend/src/services/plan.js` and the "Planning feed" section of `frontend/src/main.js`.
+**Planning feed.** While a discover/plan/build/improve request is running, a small muted checklist appears above the reply. A build runs as a tracked plan: every step is listed up front, and each one updates in place (running, done, retrying, skipped or failed) with a "done of total" count. It only shows user-facing steps, never the model's private reasoning. It's per-turn and not persisted; reloading the chat won't bring old planning cards back, only the messages themselves. See `backend/src/services/planRunner.js` and the "Planning feed" section of `frontend/src/main.js`.
 
 **Game Design Summary.** Rendered in its own bordered, accent-colored card (see `.design-summary-card` in `frontend/src/styles/main.css`), deliberately styled nothing like the muted Planning feed.
 
