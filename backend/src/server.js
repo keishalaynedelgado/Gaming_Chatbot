@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
     const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     log[level](`${req.method} ${url.pathname} ${res.statusCode} ${fields.duration_ms}ms`, fields);
   });
-  log.context.run({ request_id: requestId }, async () => {
+  (async () => {
     try {
       await router(req, res, url);
     } catch (err) {
@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
       if (!res.headersSent) json(res, err.status || 500, { error: err.message || 'Server error' });
       else res.end();
     }
-  });
+  })();
 });
 
 // Every chat and game the app persists lives in Postgres now (see store.js).
@@ -46,10 +46,9 @@ db.migrate()
       if (!llm.hasKey()) log.warn('Warning: no API key set (see .env.example).', { event: 'llm_no_api_key' });
     });
   })
-  .catch(async (err) => {
+  .catch((err) => {
     log.error('Could not connect to PostgreSQL / apply schema', { event: 'server_start_failed', err });
     console.error('Check DATABASE_URL in .env and that the database is reachable, then restart.');
-    await log.flush();
     process.exit(1);
   });
 

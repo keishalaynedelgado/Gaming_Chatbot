@@ -13,8 +13,6 @@ const { staticCheck, extractFiles, isSafePath } = require('../backend/src/servic
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgres://gamechatbot:gc_app_pw_2026@127.0.0.1:5432/gamechatbot_test';
 process.env.DATABASE_URL = TEST_DATABASE_URL;
-// The simulated outages below must not reach a real Graylog (and its alerts).
-process.env.GRAYLOG_HOST = '';
 const testDb = new Pool({ connectionString: TEST_DATABASE_URL });
 // A dedicated directory, separate from dev's own projects/ -- so test runs
 // (which freely create/delete sessions) can never collide with, or get

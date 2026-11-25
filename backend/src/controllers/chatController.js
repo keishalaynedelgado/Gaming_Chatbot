@@ -30,7 +30,6 @@ async function postChat(req, res) {
   const maxMessage = spec ? MAX_SPEC : MAX_MESSAGE;
   if (message.length > maxMessage) return json(res, 400, { error: `Message is limited to ${maxMessage} characters` });
 
-  log.setContext({ session_id: body.sessionId }); // every log line of this turn carries it
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
@@ -45,7 +44,7 @@ async function postChat(req, res) {
   const ids = new Set([body.sessionId]);
   running.set(body.sessionId, ac);
   const emit = (evt) => {
-    if (evt.type === 'session') { ids.add(evt.id); running.set(evt.id, ac); log.setContext({ session_id: evt.id }); } // Stop works on the new chat too
+    if (evt.type === 'session') { ids.add(evt.id); running.set(evt.id, ac); } // Stop works on the new chat too
     if (ac.signal.aborted) return; // after Stop, nothing more is sent
     if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(evt)}\n\n`);
   };

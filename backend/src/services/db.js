@@ -14,7 +14,7 @@ let pool = null;
 
 // Errors meaning the database itself is unreachable or refusing us (down,
 // wrong host/credentials, out of connections), as opposed to one bad query.
-// Logged as db_connection_error, which Graylog alerts on.
+// Logged as db_connection_error.
 const CONNECTION_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', '28P01', '3D000', '53300', '57P01', '57P02', '57P03']);
 const isConnectionError = (err) => CONNECTION_CODES.has(err?.code) || /^08/.test(err?.code || '')
   || /Connection terminated|timeout exceeded when trying to connect/i.test(err?.message || '');
